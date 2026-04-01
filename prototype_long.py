@@ -261,12 +261,41 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         except Exception as e:
             print(f"❌ {symbol} 入貨失敗: {e}")
 
+# ==========================================
+# 5. 倉存更新
+# ==========================================
+
+def sync_positions_from_exchange():
+    """啟動時自動接管 Bybit 上的現有持倉"""
+    try:
+        response = exchange.fetch_positions()
+        for pos in response:
+            size = float(pos.get('contracts', 0) or pos.get('size', 0))
+            if size > 0: # 只接管多單 (Long)
+                symbol = pos['symbol']
+                entry_price = float(pos['entryPrice'])
+                # 補回基本數據，等 Bot 知道要管呢隻幣
+                if symbol not in positions:
+                    atr, _ = get_market_metrics(symbol)
+                    positions[symbol] = {
+                        'amount': size,
+                        'entry_price': entry_price,
+                        'tp_price': entry_price * 1.05, # 暫定 5% 止盈
+                        'sl_price': entry_price * 0.95, # 暫定 5% 止損
+                        'is_breakeven': False,
+                        'atr': atr if atr else 0
+                    }
+                    print(f"📥 已接管現有持倉: {symbol} | 入場價: {entry_price}")
+    except Exception as e:
+        print(f"⚠️ 接管持倉失敗: {e}")
+
 
 # ==========================================
-# 5. 主程式 (呼吸延時 + 全局保護)
+# 6. 主程式 (呼吸延時 + 全局保護)
 # ==========================================
 def main():
     print(f"🚀 AI 做多實戰 V5.8 FINAL 啟動...")
+    sync_positions_from_exchange()
     try:
         while True:
             try:
