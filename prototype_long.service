@@ -1,0 +1,14 @@
+[Unit]
+Description=algo_cta_1h_4-5
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/app/algo_cta_1h_4-5
+ExecStart=/usr/local/app/algo_cta_1h_4-5/venv/bin/python3.12 main_entry_1h.py
+StandardOutput=syslog
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target
