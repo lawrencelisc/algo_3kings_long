@@ -120,9 +120,9 @@ def get_btc_regime():
 
         deviation = (current_price - sma20) / sma20
 
-        if deviation > 0.005:
+        if deviation > 0.003:
             status, signal = "🟢 綠燈 (多頭)", 1
-        elif deviation < -0.005:
+        elif deviation < -0.003:
             status, signal = "🔴 紅燈 (空頭)", -1
         else:
             status, signal = "🟡 黃燈 (震盪)", 0
