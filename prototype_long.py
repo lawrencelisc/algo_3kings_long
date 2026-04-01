@@ -106,40 +106,45 @@ def get_3_layer_avg_price(symbol, side='asks'):
 def get_btc_regime():
     """
     BTC 大盤導航 (1小時線 SMA 20 濾網)
-    加強版：同時顯示現價與 SMA20
+    加強版：具備 API 流量保護與數據輸出
     """
     try:
-        # 獲取 BTC 1小時線數據
+        # 1. 獲取 BTC 1小時線數據
         ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=30)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
 
         current_price = df['c'].iloc[-1]
         sma20 = df['c'].rolling(20).mean().iloc[-1]
 
-        # 計算偏離度 (Deviation)
+        # 2. 計算偏離度 (Deviation)
         deviation = (current_price - sma20) / sma20
 
         # 🟢 根據偏離度決定燈號文字
         if deviation > 0.005:
-            status_text = "🟢 綠燈 (多頭)"
+            status_text = "🟢 綠燈 (多頭強勢)"
             signal = 1
         elif deviation < -0.005:
-            status_text = "🔴 紅燈 (空頭)"
+            status_text = "🔴 紅燈 (空頭趨勢)"
             signal = -1
         else:
-            status_text = "🟡 黃燈 (震盪)"
+            status_text = "🟡 黃燈 (震盪觀望)"
             signal = 0
 
-        # 🚀 【新增：即時數據輸出】
-        # 顯示格式：現價 | SMA20 | 偏離度% | 狀態
-        print(
-            f"📊 BTC 導航數據 | Close: {current_price:.2f} | SMA20: {sma20:.2f} | 偏離: {deviation:.2%} | {status_text}")
+        print(f"📊 BTC 導航 | Close: {current_price:.2f} | SMA20: {sma20:.2f} | 偏離: {deviation:.2%} | {status_text}")
+        time.sleep(0.5)
 
         return signal
 
     except Exception as e:
+        # 🚨 針對 10006 Rate Limit 進行特殊處理
+        error_msg = str(e)
+        if "10006" in error_msg or "Rate Limit" in error_msg:
+            print("🛑 Bybit API 流量過載！get_btc_regime 強制進入休眠 10 秒...")
+            time.sleep(10)
+            return 0
+
         logger.error(f"⚠️ BTC 導引獲取失敗: {e}")
-        return 0  # 出錯時預設為黃燈觀望
+        return 0
 
 
 def scouting_top_coins(n=5):
@@ -287,17 +292,12 @@ def main():
                 regime = get_btc_regime()
 
                 if regime == 1:
-                    print("🟢 BTC 綠燈：大盤強勢，執行海選...")
                     target_coins = scouting_top_coins(5)
                     for s in target_coins:
                         flow, last_p, is_strong = apply_lee_ready_logic(s)
                         atr, is_volatile = get_market_metrics(s)
                         if last_p > 0:
                             execute_live_long(s, flow, last_p, is_strong, atr, is_volatile)
-                elif regime == -1:
-                    print("🔴 BTC 紅燈：趨勢轉弱，暫停入貨。")
-                else:
-                    print("🟡 BTC 黃燈：震盪行情，觀望中。")
 
                 print(f"⏳ 監控中... 持倉: {list(positions.keys())} | 餘額: {get_live_usdt_balance():.2f}")
             except Exception as e:
