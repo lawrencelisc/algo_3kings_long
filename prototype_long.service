@@ -1,13 +1,20 @@
 [Unit]
-Description=algo_3kings_long
+Description=algo_3kings_long - Bybit Quant Bot
+After=network.target
 
 [Service]
 Type=simple
+# 🚀 修正 1：解決 SSL 找不到憑證的問題
+Environment=SSL_CERT_FILE=/usr/local/app/algo_3kings_long/venv/lib/python3.12/site-packages/certifi/cacert.pem
+# 🚀 修正 2：確保 Log 即時顯示
+Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/usr/local/app/algo_3kings_long
-ExecStart=/usr/local/app/algo_3kings_long/venv/bin/python3.12 prototype_long.py
-StandardOutput=syslog
+# 🚀 修正 3：使用 -u 模式
+ExecStart=/usr/local/app/algo_3kings_long/venv/bin/python3.12 -u prototype_long.py
+
+# 🚀 修正 4：移除 StandardOutput=syslog (解決你的 obsolete 警告)
 Restart=always
-RestartSec=2
+RestartSec=10
 User=root
 
 [Install]
