@@ -1,10 +1,10 @@
 [Unit]
-Description=algo_cta_1h_4-5
+Description=algo_3kings_long
 
 [Service]
 Type=simple
-WorkingDirectory=/usr/local/app/algo_cta_1h_4-5
-ExecStart=/usr/local/app/algo_cta_1h_4-5/venv/bin/python3.12 main_entry_1h.py
+WorkingDirectory=/usr/local/app/algo_3kings_long
+ExecStart=/usr/local/app/algo_3kings_long/venv/bin/python3.12 prototype_long.py
 StandardOutput=syslog
 Restart=always
 RestartSec=2
