@@ -121,13 +121,13 @@ def get_btc_regime():
 
         # 🟢 根據偏離度決定燈號文字
         if deviation > 0.005:
-            status_text = "🟢 綠燈 (多頭)"
+            status_text = "GO GREEN"
             signal = 1
         elif deviation < -0.005:
-            status_text = "🔴 紅燈 (空頭)"
+            status_text = "GO RED"
             signal = -1
         else:
-            status_text = "🟡 黃燈 (震盪)"
+            status_text = "GO YELLOW"
             signal = 0
 
         # 🚀 【新增：即時數據輸出】
