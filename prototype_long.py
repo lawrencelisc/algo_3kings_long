@@ -124,7 +124,6 @@ def get_btc_regime():
             status, signal = "🔴 紅燈", -1
         else:
             status, signal = "🟡 黃燈", 0
-
         print(
             f"📊 BTC | Price: {current_price:.0f} | Dev: {deviation:.2%} | Trend: {'UP' if sma20 > sma50 else 'DW'} | {status}")
         return signal
@@ -241,7 +240,8 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         try:
             exchange.set_leverage(int(MAX_LEVERAGE), symbol)
         except Exception as e:
-            logger.warning(f"⚠️ {symbol} 槓桿設置失敗: {e}")
+            if "110043" not in str(e):
+                logger.warning(f"⚠️ {symbol} 槓桿失敗: {e}")
 
         ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
         tp_p, sl_p = ioc_p + (TP_ATR_MULT * atr), ioc_p - (SL_ATR_MULT * atr)
@@ -263,33 +263,47 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             print(f"❌ {symbol} 失敗: {e}")
 
 
+# ==========================================
+# 5. 主程序 (🚀 嚴格鎖死縮進版)
+# ==========================================
 def main():
-    print(f"🚀 AI 實戰 V5.9 (缺陷修正版) 啟動...")
+    print(f"🚀 AI 實戰 V5.9.1 (靜音+嚴格鎖死版) 啟動...")
     last_scout_time = 0
     while True:
         try:
-            # 🚀 修正 9：高頻率檢查持倉 (10秒一次)
             manage_long_positions()
-
-            # 分離海選掃描 (120秒一次)
-            current_time = time.time()
-            if current_time - last_scout_time > SCOUTING_INTERVAL:
+            curr_t = time.time()
+            if curr_t - last_scout_time > SCOUTING_INTERVAL:
                 regime = get_btc_regime()
-                if regime == 1:
-                    for s in scouting_top_coins(5):
-                        flow, last_p, is_strong = apply_lee_ready_logic(s)
-                        atr, is_volatile = get_market_metrics(s)
-                        if last_p > 0: execute_live_long(s, flow, last_p, is_strong, atr, is_volatile)
-                        time.sleep(0.5)
-                last_scout_time = current_time
-                print(f"⏳ 巡邏中... 持倉: {list(positions.keys())}")
 
-            time.sleep(POSITION_CHECK_INTERVAL)  # 修正 9：主循環改為短休眠
+                # 🚀 修正：確保海選邏輯「完全被包裹」在綠燈判斷入面
+                if regime == 1:
+                    print("🟢 綠燈：執行海選掃描...")
+                    tickers = exchange.fetch_tickers()
+                    data = [{'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']} for s, t in
+                            tickers.items() if s.endswith(':USDT') and s not in BLACKLIST]
+                    target_coins = \
+                    pd.DataFrame(data).sort_values('volume', ascending=False).head(20).sort_values('change',
+                                                                                                   ascending=False).head(
+                        5)['symbol'].tolist()
+                    for s in target_coins:
+                        flow, last_p, is_strong = apply_lee_ready_logic(s)
+                        atr, is_v = get_market_metrics(s)
+                        if last_p > 0: execute_live_long(s, flow, last_p, is_strong, atr, is_v)
+                        time.sleep(0.5)
+                else:
+                    # 紅燈或黃燈時，只巡邏持倉，唔會做海選
+                    print(f"🚦 目前導航狀態為 {regime}，海選暫停。")
+
+                last_scout_time = curr_t
+                print(f"⏳ 巡邏完畢 | 持倉: {list(positions.keys())}")
+
+            time.sleep(POSITION_CHECK_INTERVAL)
         except Exception as e:
             if "10006" in str(e):
                 time.sleep(30)
             else:
-                logger.error(f"⚠️ 異常: {e}"); time.sleep(10)
+                time.sleep(10)
 
 
 if __name__ == "__main__":
