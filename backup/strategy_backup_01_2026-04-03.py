@@ -44,6 +44,13 @@ def get_btc_regime():
 def scouting_top_coins(n=5):
     try:
         tickers = exchange.fetch_tickers()
+
+        # ❌ 舊代碼
+        # data = [{'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']}
+        #         for s, t in tickers.items() if
+        #         s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None]
+
+        # 🚀 修正：加入 Spread 過濾，拒絕流動性陷阱 (差價必須 < 0.15%)
         data = []
         for s, t in tickers.items():
             if s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None:

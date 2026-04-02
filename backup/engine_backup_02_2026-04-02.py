@@ -155,6 +155,9 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
                     break
 
         if actual_amount == 0:
+            # ❌ 舊代碼
+            # print(f"⏩ {symbol} IOC order not filled, aborting.")
+            # return
 
             # 🚀 修正：強化 IOC 未成交防禦，執行核彈撤單
             print(f"⏩ {symbol} IOC 未成交或數量為 0，執行核彈撤單並退出。")
@@ -233,6 +236,10 @@ def manage_long_positions():
             if dist_to_tp < 0.0015 or dist_to_sl < 0.0015:
                 is_critical_zone = True
 
+            # ❌ 舊代碼
+            # if not pos['is_breakeven'] and pnl_pct > 0.003:
+            #     pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0002, True, True
+
             # 🚀 修正：0.15% (1.0015) 確保能完全覆蓋 Bybit 雙向 Taker 手續費 (0.11%) 及滑價
             if not pos['is_breakeven'] and pnl_pct > 0.003:
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0015, True, True
@@ -264,6 +271,15 @@ def manage_long_positions():
             if exit_reason:
                 print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
 
+                # ❌ 舊代碼
+                # try:
+                #     ioc_price = curr_p * 0.995
+                #     exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
+                #                           {'timeInForce': 'IOC', 'reduceOnly': True})
+                # except:
+                #     exchange.create_market_sell_order(s, pos['amount'], {'reduceOnly': True})
+
+                # 🚀 修正：優先使用訂單簿買一價向下穿透，拿不到才用現價，比單純用現價更穩陣
                 try:
                     try:
                         ob = exchange.fetch_order_book(s, limit=1)
