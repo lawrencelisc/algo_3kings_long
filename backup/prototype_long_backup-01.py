@@ -35,7 +35,7 @@ WORKING_CAPITAL, MAX_LEVERAGE, RISK_PER_TRADE = 1000.0, 10.0, 0.01
 NET_FLOW_SIGMA, TP_ATR_MULT, SL_ATR_MULT, TRAIL_ATR_MULT = 1.5, 1.5, 1.0, 1.0
 SCOUTING_INTERVAL = 120
 POSITION_CHECK_INTERVAL = 10
-MIN_NOTIONAL = 5.0
+MIN_NOTIONAL = 5.0  # Bybit 最小訂單金額
 
 BLACKLIST = [
     'USDC/USDT:USDT', 'DAI/USDT:USDT', 'FDUSD/USDT:USDT', 'BUSD/USDT:USDT',
@@ -69,21 +69,9 @@ def get_live_usdt_balance():
 
 
 def cancel_all_v5(symbol):
-    """核彈級撤單：清理所有掛單與倉位綁定的 TP/SL"""
     try:
-        exchange.cancel_all_orders(symbol, params={'category': 'linear'})
-        exchange.cancel_all_orders(symbol, params={'category': 'linear', 'orderFilter': 'StopOrder'})
-        exchange.cancel_all_orders(symbol, params={'category': 'linear', 'orderFilter': 'tpslOrder'})
-    except:
-        pass
-    try:
-        exchange.private_post_v5_position_trading_stop({
-            'category': 'linear',
-            'symbol': exchange.market_id(symbol),
-            'takeProfit': "0",
-            'stopLoss': "0",
-            'positionIdx': 0
-        })
+        exchange.cancel_all_orders(symbol, params={'orderFilter': 'Order'})
+        exchange.cancel_all_orders(symbol, params={'orderFilter': 'StopOrder'})
     except:
         pass
 
@@ -191,27 +179,9 @@ def manage_long_positions():
 
         for s in list(positions.keys()):
             if s not in live_symbols:
-                print(f"🧹 交易所已自動平倉 (TP/SL)，清理本地紀錄: {s}")
-
-                # 📝 補漏：為「交易所原生平倉」補寫 CSV 紀錄
-                try:
-                    curr_p = exchange.fetch_ticker(s)['last']
-                    pos = positions[s]
-                    # 做空 PnL 估算
-                    est_pnl = round((curr_p - pos['entry_price']) * pos['amount'], 4)
-                    log_to_csv({
-                        'symbol': s,
-                        'action': 'NATIVE_EXIT',
-                        'price': curr_p,
-                        'amount': pos['amount'],
-                        'reason': 'Bybit Native TP/SL',
-                        'realized_pnl': est_pnl
-                    })
-                except Exception as e:
-                    pass  # 即使攞價錢失敗，都照樣繼續清理
-
-                cancel_all_v5(s)
-                # 🚨 修復：絕對不刪除冷卻時間，必須硬性坐滿 1 小時！
+                print(f"🧹 Clearing phantom/manual position: {s}")
+                if s in cooldown_tracker:
+                    del cooldown_tracker[s]
                 del positions[s]
                 continue
 
@@ -253,9 +223,10 @@ def manage_long_positions():
                 log_to_csv(
                     {'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
                      'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)})
-
                 cancel_all_v5(s)
-                # 🚨 修復：絕對不刪除冷卻時間
+
+                if s in cooldown_tracker:
+                    del cooldown_tracker[s]
                 del positions[s]
     except Exception as e:
         if "10006" in str(e):
@@ -263,14 +234,14 @@ def manage_long_positions():
 
 
 # ==========================================
-# 4. 執行入場
+# 4. 執行入場（🚨 核心修復區域）
 # ==========================================
 def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
     if symbol in cooldown_tracker:
         if time.time() < cooldown_tracker[symbol]:
             return
         else:
-            del cooldown_tracker[symbol]  # 只有在這裡（時間到期）才可以刪除冷卻！
+            del cooldown_tracker[symbol]
 
     if not (is_strong and is_volatile and symbol not in positions):
         return
@@ -303,20 +274,24 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             logger.warning(f"⚠️ {symbol} Leverage setup anomaly: {e}")
 
     try:
+        # 第一步：開倉
         order = exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p,
                                       {'timeInForce': 'IOC', 'positionIdx': 0})
         time.sleep(1)
 
+        # 🚨 第二步：防彈級訂單獲取邏輯
         actual_price = ioc_p
         actual_amount = 0
 
         try:
+            # 加入 params={"acknowledged": True} 嘗試解決 Bybit 警告
             order_detail = exchange.fetch_order(order['id'], symbol, params={"acknowledged": True})
             actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
             actual_amount = float(order_detail.get('filled', 0))
         except Exception as e:
             logger.warning(f"⚠️ {symbol} Failed to fetch order, initiating fallback position sync: {e}")
             time.sleep(0.5)
+            # 如果 API 報錯，直接查真實倉位
             live_pos = exchange.fetch_positions()
             for p in live_pos:
                 if p['symbol'] == symbol and float(p.get('contracts', 0) or p.get('size', 0)) > 0:
@@ -324,6 +299,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
                     actual_price = float(p.get('entryPrice') or ioc_p)
                     break
 
+        # 檢查數量，如果為0代表沒買到 (IOC取消)
         if actual_amount == 0:
             print(f"⏩ {symbol} IOC order not filled, aborting.")
             return
@@ -353,7 +329,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             'atr': atr
         }
 
-        cooldown_tracker[symbol] = time.time() + 3600  # 嚴格賦予 1 小時冷卻
+        cooldown_tracker[symbol] = time.time() + 3600
 
         log_to_csv({
             'symbol': symbol,
@@ -379,7 +355,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
 # 5. 主程序
 # ==========================================
 def main():
-    print(f"🚀 AI AlgoTrade V6.0 FINAL LONG (防連夾修復版) Started...")
+    print(f"🚀 AI AlgoTrade V6.0 FINAL (Safe Fallback Version) Started...")
     last_scout_time = 0
 
     while True:

@@ -26,6 +26,17 @@ def get_live_usdt_balance():
     except:
         return 0.0
 
+# ❌ 舊版本 (保留作紀錄，已註解)
+# def cancel_all_v5(symbol):
+#     """撤銷特定交易對的所有未完成訂單"""
+#     try:
+#         exchange.cancel_all_orders(symbol, params={'orderFilter': 'Order'})
+#         exchange.cancel_all_orders(symbol, params={'orderFilter': 'StopOrder'})
+#     except:
+#         pass
+
+# 🚀 新版本：核彈級撤單
+
 def cancel_all_v5(symbol):
     """💣 核彈級撤單：清理所有掛單與倉位綁定的 TP/SL"""
     try:

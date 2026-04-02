@@ -199,6 +199,10 @@ def manage_long_positions():
 
         for s in list(positions.keys()):
             if s not in live_symbols:
+                # ❌ 舊代碼 (無差別解鎖，會引起防連夾失效)
+                # if s in cooldown_tracker: del cooldown_tracker[s]
+                # del positions[s]
+                # continue
 
                 # 🚀 新代碼：處理原生平倉
                 print(f"🧹 交易所已自動平倉，處理真實 PnL 結算單: {s}")
@@ -266,6 +270,15 @@ def manage_long_positions():
                                           {'timeInForce': 'IOC', 'reduceOnly': True})
                 except:
                     exchange.create_market_sell_order(s, pos['amount'], {'reduceOnly': True})
+
+                # ❌ 舊代碼 (無差別解鎖，同埋會計兩次數)
+                # log_to_csv({
+                #     'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
+                #     'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)
+                # })
+                # cancel_all_v5(s)
+                # if s in cooldown_tracker: del cooldown_tracker[s]
+                # del positions[s]
 
                 # 🚀 新代碼：處理主動平倉
                 # 📈 先獨立計算好 Long 的利潤
