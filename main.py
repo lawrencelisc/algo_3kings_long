@@ -37,7 +37,7 @@ def main():
                         except Exception as e:
                             logger.warning(f"⚠️ {s} Analysis Failed: {e}")
                             continue
-                        time.sleep(0.5)
+                        time.sleep(1.5)
                 else:
                     print(f"🚦 Current Navigation Status: {regime}, Scouting Paused.")
 

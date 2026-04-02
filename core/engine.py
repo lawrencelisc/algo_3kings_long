@@ -159,8 +159,12 @@ def manage_long_positions():
                 del positions[s]
                 continue
 
+        if positions:
+            all_tickers = exchange.fetch_tickers(list(positions.keys()))
+
         for s in list(positions.keys()):
-            curr_p, pos = exchange.fetch_ticker(s)['last'], positions[s]
+            if s not in all_tickers: continue
+            curr_p, pos = all_tickers[s]['last'], positions[s]
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
             sl_updated = False
 
@@ -174,7 +178,12 @@ def manage_long_positions():
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0002, True, True
             if pos['is_breakeven']:
                 trail_sl = curr_p - (s_cfg['trail_atr_mult'] * pos['atr'])
-                if trail_sl > pos['sl_price']: pos['sl_price'], sl_updated = trail_sl, True
+                # 計算：只有當新的 SL 比舊的 SL 高出至少 0.2% 時，才發送 API 更新到交易所
+                if trail_sl > pos['sl_price']:
+                    if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.002:
+                        sl_updated = True
+                    # 本地端始終保持最新，隨時準備 IOC 平倉
+                    pos['sl_price'] = trail_sl
 
             if sl_updated:
                 f_sl = exchange.price_to_precision(s, pos['sl_price'])
@@ -195,9 +204,8 @@ def manage_long_positions():
             if exit_reason:
                 print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
                 try:
-                    # 平倉同樣抓取精準的最佳買一價 (Best Bid)
-                    ob = exchange.fetch_order_book(s, limit=1)
-                    ioc_price = ob['bids'][0][0]
+                    # 改為直接計算穿透價格 (對多單平倉，價格故意報低 0.5% 以確保 IOC 吃單成交)
+                    ioc_price = curr_p * 0.995
                     exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
                                           {'timeInForce': 'IOC', 'reduceOnly': True})
                 except:
