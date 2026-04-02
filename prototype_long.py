@@ -10,9 +10,8 @@ from datetime import datetime
 # 0. 系統與日誌設定
 # ==========================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('AlgoTrade_V5.9')
+logger = logging.getLogger('AlgoTrade_V6.0_Final')
 
-# ⚠️ 請確保 API 金鑰安全
 API_KEY = "1VjRtJ4cjuJiFk2wFs"
 API_SECRET = "s5N38enwd75l0CxvIFLPFWWWmAbj2YxK941j"
 
@@ -30,23 +29,18 @@ if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 
 positions, cooldown_tracker = {}, {}
 
-# 👑 策略參數 (九大修正點：頻率分離)
+# 👑 策略參數
 WORKING_CAPITAL, MAX_LEVERAGE, RISK_PER_TRADE = 1000.0, 10.0, 0.01
 NET_FLOW_SIGMA, TP_ATR_MULT, SL_ATR_MULT, TRAIL_ATR_MULT = 1.5, 1.5, 1.0, 1.0
-SCOUTING_INTERVAL = 120  # 海選掃描：120秒一次
-POSITION_CHECK_INTERVAL = 10  # 持倉管理：10秒一次 (修正 9)
+SCOUTING_INTERVAL = 120
+POSITION_CHECK_INTERVAL = 10
+MIN_NOTIONAL = 5.0  # 🔥 新增: Bybit 最小訂單金額
 
-# 🚀 恢復至 21+ 完整保護模式，防止 Bot 誤入「死水區」
 BLACKLIST = [
-    # 1. 傳統穩定幣 (1.00 附近死火，完全無趨勢可言)
     'USDC/USDT:USDT', 'DAI/USDT:USDT', 'FDUSD/USDT:USDT', 'BUSD/USDT:USDT',
     'TUSD/USDT:USDT', 'PYUSD/USDT:USDT', 'USDP/USDT:USDT', 'EURS/USDT:USDT',
-
-    # 2. 算法/合成穩定幣 (波動極小，不適合 Lee-Ready 邏輯)
     'USDE/USDT:USDT', 'USAT/USDT:USDT', 'USD0/USDT:USDT', 'USTC/USDT:USDT',
     'LUSD/USDT:USDT', 'FRAX/USDT:USDT', 'MIM/USDT:USDT', 'RLUSD/USDT:USDT',
-
-    # 3. Wrapped/LST 資產 (價格與原生幣掛鉤，會造成重複持倉風險)
     'WBTC/USDT:USDT', 'WETH/USDT:USDT', 'WBNB/USDT:USDT', 'WAVAX/USDT:USDT',
     'stETH/USDT:USDT', 'cbETH/USDT:USDT', 'WHT/USDT:USDT'
 ]
@@ -76,7 +70,7 @@ def get_live_usdt_balance():
 def cancel_all_v5(symbol):
     try:
         exchange.cancel_all_orders(symbol, params={'orderFilter': 'Order'})
-        exchange.cancel_all_orders(symbol, params={'orderFilter': 'StopOrder'})  # 修正 1
+        exchange.cancel_all_orders(symbol, params={'orderFilter': 'StopOrder'})
     except:
         pass
 
@@ -87,7 +81,6 @@ def get_market_metrics(symbol):
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df['tr'] = np.maximum(df['h'] - df['l'],
                               np.maximum(abs(df['h'] - df['c'].shift(1)), abs(df['l'] - df['c'].shift(1))))
-        # 🚀 修正 4：防止 ATR 返回 NaN
         atr = df['tr'].rolling(14, min_periods=1).mean().iloc[-1]
         if pd.isna(atr) or atr == 0: return None, False
         is_volatile = (atr / df['c'].iloc[-1]) > 0.0005
@@ -106,7 +99,7 @@ def get_3_layer_avg_price(symbol, side='asks'):
 
 
 # ==========================================
-# 2. 導航與海選 (修正 6 & 8)
+# 2. 導航與海選
 # ==========================================
 def get_btc_regime():
     try:
@@ -114,10 +107,9 @@ def get_btc_regime():
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         current_price = df['c'].iloc[-1]
         sma20 = df['c'].rolling(20).mean().iloc[-1]
-        sma50 = df['c'].rolling(50).mean().iloc[-1]  # 🚀 修正 6：加入長線確認
+        sma50 = df['c'].rolling(50).mean().iloc[-1]
 
         deviation = (current_price - sma20) / sma20
-        # 🟢 進場條件：偏離度 > 0.25% 且 短線在長線之上
         if deviation > 0.0025 and sma20 > sma50:
             status, signal = "🟢 綠燈 (趨勢確認)", 1
         elif deviation < -0.0025:
@@ -153,7 +145,6 @@ def apply_lee_ready_logic(symbol):
         df['dir'] = np.where(df['price'] > midpoint, 1, np.where(df['price'] < midpoint, -1, 0))
         df['tick'] = df['price'].diff().apply(np.sign).replace(0, np.nan).ffill().fillna(0)
         df['final'] = np.where(df['dir'] != 0, df['dir'], df['tick'])
-        # 🚀 修正 8：改用金額加權流向 (Price * Amount)
         df['weighted_flow'] = df['final'] * df['amount'] * df['price']
         net_flow = df['weighted_flow'].sum()
         is_strong = net_flow > (df['weighted_flow'].std() * NET_FLOW_SIGMA)
@@ -163,11 +154,10 @@ def apply_lee_ready_logic(symbol):
 
 
 # ==========================================
-# 3. 持倉管理 (修正 2 & 3)
+# 3. 持倉管理
 # ==========================================
 def manage_long_positions():
     try:
-        # 🚀 修正 2：重新對齊交易所實際倉位，清理幽靈倉位
         live_positions_raw = exchange.fetch_positions()
         live_symbols = {p['symbol']: p for p in live_positions_raw if
                         float(p.get('contracts', 0) or p.get('size', 0)) > 0}
@@ -175,6 +165,9 @@ def manage_long_positions():
         for s in list(positions.keys()):
             if s not in live_symbols:
                 print(f"🧹 清理幽靈倉位或已手動平倉之標的: {s}")
+                # 🔥 修改點 2: 平倉時清除冷卻時間
+                if s in cooldown_tracker:
+                    del cooldown_tracker[s]
                 del positions[s]
                 continue
 
@@ -198,7 +191,6 @@ def manage_long_positions():
                 except:
                     pass
 
-            # 🚀 修正 3：簡化平倉邏輯，高波動下直接使用 IOC
             exit_reason = None
             if curr_p >= pos['tp_price']:
                 exit_reason = "TP (IOC)"
@@ -217,92 +209,172 @@ def manage_long_positions():
                 log_to_csv(
                     {'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
                      'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)})
-                cancel_all_v5(s);
+                cancel_all_v5(s)
+                # 🔥 修改點 3: 平倉時清除冷卻時間
+                if s in cooldown_tracker:
+                    del cooldown_tracker[s]
                 del positions[s]
     except Exception as e:
-        if "10006" in str(e): time.sleep(5)
+        if "10006" in str(e):
+            time.sleep(5)
 
 
 # ==========================================
-# 4. 執行與主程序 (修正 5 & 7 & 9)
+# 4. 執行入場（核心修復區域）
 # ==========================================
 def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
-    if symbol in cooldown_tracker and time.time() < cooldown_tracker[symbol]: return
-    if is_strong and is_volatile and symbol not in positions:
-        cancel_all_v5(symbol)
-        actual_bal = get_live_usdt_balance()
-        eff_bal = min(WORKING_CAPITAL, actual_bal)
-        trade_val = min((eff_bal * RISK_PER_TRADE) / (atr / current_price), eff_bal * MAX_LEVERAGE * 0.95)
-        amount = float(exchange.amount_to_precision(symbol, trade_val / current_price))
-        if amount < exchange.markets[symbol]['limits']['amount']['min']: return
+    # 冷卻檢查
+    if symbol in cooldown_tracker and time.time() < cooldown_tracker[symbol]:
+        return
 
-        # 🚀 修正 5：記錄槓桿設置錯誤
+    # 信號檢查
+    if not (is_strong and is_volatile and symbol not in positions):
+        return
+
+    cancel_all_v5(symbol)
+
+    # 資金計算
+    actual_bal = get_live_usdt_balance()
+    eff_bal = min(WORKING_CAPITAL, actual_bal)
+    trade_val = min((eff_bal * RISK_PER_TRADE) / (atr / current_price), eff_bal * MAX_LEVERAGE * 0.95)
+    amount = float(exchange.amount_to_precision(symbol, trade_val / current_price))
+
+    # 🔥 修改點 4: 檢查數量和金額下限
+    if amount < exchange.markets[symbol]['limits']['amount']['min']:
+        return
+
+    ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
+
+    # 🔥 修改點 5: 檢查最小名義價值
+    if amount * ioc_p < MIN_NOTIONAL:
+        logger.warning(f"⚠️ {symbol} 訂單金額 {amount * ioc_p:.2f} 低於最小值 {MIN_NOTIONAL}")
+        return
+
+    # 🔥 修改點 6: 嚴格的槓桿錯誤處理
+    try:
+        exchange.set_leverage(int(MAX_LEVERAGE), symbol)
+    except Exception as e:
+        if "110043" in str(e):
+            pass  # 槓桿已設置，忽略
+        elif "110026" in str(e):
+            logger.error(f"❌ {symbol} 不支持 {MAX_LEVERAGE}x 槓桿，跳過入場")
+            return
+        else:
+            logger.warning(f"⚠️ {symbol} 槓桿設置異常: {e}")
+
+    try:
+        # 🔥 修改點 7: 第一步 - 只開倉，不帶止盈止損
+        order = exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p,
+                                      {'timeInForce': 'IOC', 'positionIdx': 0})
+
+        time.sleep(1)
+
+        # 🔥 修改點 8: 第二步 - 獲取實際成交價和數量
+        order_detail = exchange.fetch_order(order['id'], symbol)
+        actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
+        actual_amount = float(order_detail.get('filled', 0))
+
+        # 🔥 修改點 9: 檢查是否成交
+        if actual_amount == 0:
+            logger.warning(f"❌ {symbol} IOC 訂單未成交，放棄入場")
+            return
+
+        # 🔥 修改點 10: 基於實際成交價計算止盈止損
+        tp_p = float(exchange.price_to_precision(symbol, actual_price + (TP_ATR_MULT * atr)))
+        sl_p = float(exchange.price_to_precision(symbol, actual_price - (SL_ATR_MULT * atr)))
+
+        # 🔥 修改點 11: 第三步 - 設置止盈止損
         try:
-            exchange.set_leverage(int(MAX_LEVERAGE), symbol)
+            exchange.private_post_v5_position_trading_stop({
+                'category': 'linear',
+                'symbol': exchange.market_id(symbol),
+                'stopLoss': str(sl_p),
+                'takeProfit': str(tp_p),
+                'tpslMode': 'Full',
+                'positionIdx': 0
+            })
+            print(f"✅ {symbol} 止盈止損已設置 | TP: {tp_p} | SL: {sl_p}")
         except Exception as e:
-            if "110043" not in str(e):
-                logger.warning(f"⚠️ {symbol} 槓桿失敗: {e}")
+            logger.error(f"❌ {symbol} 止盈止損設置失敗: {e}")
+            # 即使止盈止損失敗，仍記錄倉位（後續可手動管理）
 
-        ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
-        tp_p, sl_p = ioc_p + (TP_ATR_MULT * atr), ioc_p - (SL_ATR_MULT * atr)
+        # 🔥 修改點 12: 記錄倉位（使用實際成交價和數量）
+        positions[symbol] = {
+            'amount': actual_amount,
+            'entry_price': actual_price,
+            'tp_price': tp_p,
+            'sl_price': sl_p,
+            'is_breakeven': False,
+            'atr': atr
+        }
 
-        try:
-            params = {'timeInForce': 'IOC', 'stopLoss': str(exchange.price_to_precision(symbol, sl_p)),
-                      'takeProfit': str(exchange.price_to_precision(symbol, tp_p)), 'positionIdx': 0}
-            exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p, params)
-            positions[symbol] = {'amount': amount, 'entry_price': ioc_p, 'tp_price': tp_p, 'sl_price': sl_p,
-                                 'is_breakeven': False, 'atr': atr}
-            # 🚀 修正 7：設置冷卻時間
-            cooldown_tracker[symbol] = time.time() + 3600
-            log_to_csv({'symbol': symbol, 'action': 'ENTRY', 'price': ioc_p, 'amount': amount,
-                        'trade_value': round(amount * ioc_p, 2), 'atr': round(atr, 4), 'net_flow': round(net_flow, 2),
-                        'tp_price': tp_p, 'sl_price': sl_p, 'actual_balance': round(actual_bal, 2),
-                        'effective_balance': eff_bal})
-            print(f"🚀 [已入貨] {symbol}")
-        except Exception as e:
-            print(f"❌ {symbol} 失敗: {e}")
+        cooldown_tracker[symbol] = time.time() + 3600
+
+        log_to_csv({
+            'symbol': symbol,
+            'action': 'ENTRY',
+            'price': actual_price,  # 🔥 使用實際價格
+            'amount': actual_amount,  # 🔥 使用實際數量
+            'trade_value': round(actual_amount * actual_price, 2),
+            'atr': round(atr, 4),
+            'net_flow': round(net_flow, 2),
+            'tp_price': tp_p,
+            'sl_price': sl_p,
+            'actual_balance': round(actual_bal, 2),
+            'effective_balance': eff_bal
+        })
+
+        print(f"🚀 [已入貨] {symbol} @ {actual_price:.4f} | 數量: {actual_amount}")
+
+    except Exception as e:
+        logger.error(f"❌ {symbol} 入場失敗: {e}")
 
 
 # ==========================================
-# 5. 主程序 (🚀 嚴格鎖死縮進版)
+# 5. 主程序
 # ==========================================
 def main():
-    print(f"🚀 AI 實戰 V5.9.1 (靜音+嚴格鎖死版) 啟動...")
+    print(f"🚀 AI 實戰 V6.0 FINAL (完全修復版) 啟動...")
     last_scout_time = 0
+
     while True:
         try:
             manage_long_positions()
             curr_t = time.time()
+
             if curr_t - last_scout_time > SCOUTING_INTERVAL:
                 regime = get_btc_regime()
 
-                # 🚀 修正：確保海選邏輯「完全被包裹」在綠燈判斷入面
                 if regime == 1:
                     print("🟢 綠燈：執行海選掃描...")
-                    tickers = exchange.fetch_tickers()
-                    data = [{'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']} for s, t in
-                            tickers.items() if s.endswith(':USDT') and s not in BLACKLIST]
-                    target_coins = \
-                    pd.DataFrame(data).sort_values('volume', ascending=False).head(20).sort_values('change',
-                                                                                                   ascending=False).head(
-                        5)['symbol'].tolist()
+                    # 🔥 修改點 13: 使用現有函數避免重複代碼
+                    target_coins = scouting_top_coins(5)
+
                     for s in target_coins:
-                        flow, last_p, is_strong = apply_lee_ready_logic(s)
-                        atr, is_v = get_market_metrics(s)
-                        if last_p > 0: execute_live_long(s, flow, last_p, is_strong, atr, is_v)
+                        # 🔥 修改點 14: 加入異常捕獲，避免單一幣種錯誤中斷整個循環
+                        try:
+                            flow, last_p, is_strong = apply_lee_ready_logic(s)
+                            atr, is_v = get_market_metrics(s)
+                            if last_p > 0:
+                                execute_live_long(s, flow, last_p, is_strong, atr, is_v)
+                        except Exception as e:
+                            logger.warning(f"⚠️ {s} 分析失敗: {e}")
+                            continue
                         time.sleep(0.5)
                 else:
-                    # 紅燈或黃燈時，只巡邏持倉，唔會做海選
                     print(f"🚦 目前導航狀態為 {regime}，海選暫停。")
 
                 last_scout_time = curr_t
-                print(f"⏳ 巡邏完畢 | 持倉: {list(positions.keys())}")
+                print(f"⏳ 巡邏完畢 | 持倉: {list(positions.keys())} | 餘額: {get_live_usdt_balance():.2f}")
 
             time.sleep(POSITION_CHECK_INTERVAL)
+
         except Exception as e:
             if "10006" in str(e):
+                logger.warning("🚨 流量過載，休眠 30 秒...")
                 time.sleep(30)
             else:
+                logger.error(f"⚠️ 主循環錯誤: {e}")
                 time.sleep(10)
 
 
