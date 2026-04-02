@@ -35,7 +35,7 @@ WORKING_CAPITAL, MAX_LEVERAGE, RISK_PER_TRADE = 1000.0, 10.0, 0.01
 NET_FLOW_SIGMA, TP_ATR_MULT, SL_ATR_MULT, TRAIL_ATR_MULT = 1.5, 1.5, 1.0, 1.0
 SCOUTING_INTERVAL = 120
 POSITION_CHECK_INTERVAL = 10
-MIN_NOTIONAL = 5.0  # 🔥 新增: Bybit 最小訂單金額
+MIN_NOTIONAL = 5.0  # Bybit 最小訂單金額
 
 BLACKLIST = [
     'USDC/USDT:USDT', 'DAI/USDT:USDT', 'FDUSD/USDT:USDT', 'BUSD/USDT:USDT',
@@ -110,37 +110,31 @@ def get_btc_regime():
         sma20 = df['c'].rolling(20).mean().iloc[-1]
         sma50 = df['c'].rolling(50).mean().iloc[-1]
 
-        # 🚀 多頭核心門檻 (目前維持 Hard-code 0.0025)
         target_long = sma20 * (1 + 0.0025)
-        deviation = (curr_p - sma20) / sma20
 
-        # 📊 多頭條件檢查
-        cond_price = curr_p > target_long  # 價格是否突破目標位
-        cond_trend = sma20 > sma50  # 趨勢是否為多頭排列 (黃金交叉)
+        cond_price = curr_p > target_long
+        cond_trend = sma20 > sma50
 
-        # 轉化為視覺圖標
         tick_p = "✅" if cond_price else "❌"
         tick_t = "✅" if cond_trend else "❌"
 
-        # 🚦 燈號邏輯
         if cond_price and cond_trend:
-            status, signal = "🟢 綠燈 (多頭全軍出擊)", 1
+            status, signal = "🟢 GREEN (Bullish - All in)", 1
         elif cond_price or cond_trend:
-            status, signal = "🟡 黃燈 (條件未齊 - 觀望)", 0
+            status, signal = "🟡 YELLOW (Conditions unmet - Standby)", 0
         else:
-            status, signal = "🔴 紅燈 (空頭強勢 - 禁入)", -1
+            status, signal = "🔴 RED (Bearish - Do not enter)", -1
 
-        # 🚀 終極視覺化 Presentation
         print("-" * 60)
-        print(f"📈 BTC 實時戰報 (Long) | 現價: {curr_p:.0f}")
-        print(f"1️⃣ 價格門檻: {curr_p:.0f} > {target_long:.0f} {tick_p}")
-        print(f"2️⃣ 趨勢確認: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
-        print(f"🚦 最終決策: {status}")
+        print(f"📈 BTC Live Status (Long) | Price: {curr_p:.0f}")
+        print(f"1️⃣ Price Threshold: {curr_p:.0f} > {target_long:.0f} {tick_p}")
+        print(f"2️⃣ Trend Confirmation: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
+        print(f"🚦 Final Decision: {status}")
         print("-" * 60)
 
         return signal
     except Exception as e:
-        print(f"⚠️ 導航故障: {e}")
+        print(f"⚠️ Navigation Fault: {e}")
         return 0
 
 
@@ -185,8 +179,7 @@ def manage_long_positions():
 
         for s in list(positions.keys()):
             if s not in live_symbols:
-                print(f"🧹 清理幽靈倉位或已手動平倉之標的: {s}")
-                # 🔥 修改點 2: 平倉時清除冷卻時間
+                print(f"🧹 Clearing phantom/manual position: {s}")
                 if s in cooldown_tracker:
                     del cooldown_tracker[s]
                 del positions[s]
@@ -219,7 +212,7 @@ def manage_long_positions():
                 exit_reason = "SL (IOC)"
 
             if exit_reason:
-                print(f"⚔️ 觸發 {exit_reason}，執行 IOC 平倉: {s}")
+                print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
                 try:
                     ioc_price = get_3_layer_avg_price(s, 'bids') or curr_p
                     exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
@@ -231,7 +224,7 @@ def manage_long_positions():
                     {'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
                      'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)})
                 cancel_all_v5(s)
-                # 🔥 修改點 3: 平倉時清除冷卻時間
+
                 if s in cooldown_tracker:
                     del cooldown_tracker[s]
                 del positions[s]
@@ -241,70 +234,79 @@ def manage_long_positions():
 
 
 # ==========================================
-# 4. 執行入場（核心修復區域）
+# 4. 執行入場（🚨 核心修復區域）
 # ==========================================
 def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
-    # 冷卻檢查
-    if symbol in cooldown_tracker and time.time() < cooldown_tracker[symbol]:
-        return
+    if symbol in cooldown_tracker:
+        if time.time() < cooldown_tracker[symbol]:
+            return
+        else:
+            del cooldown_tracker[symbol]
 
-    # 信號檢查
     if not (is_strong and is_volatile and symbol not in positions):
         return
 
     cancel_all_v5(symbol)
 
-    # 資金計算
     actual_bal = get_live_usdt_balance()
     eff_bal = min(WORKING_CAPITAL, actual_bal)
     trade_val = min((eff_bal * RISK_PER_TRADE) / (atr / current_price), eff_bal * MAX_LEVERAGE * 0.95)
     amount = float(exchange.amount_to_precision(symbol, trade_val / current_price))
 
-    # 🔥 修改點 4: 檢查數量和金額下限
     if amount < exchange.markets[symbol]['limits']['amount']['min']:
         return
 
     ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
 
-    # 🔥 修改點 5: 檢查最小名義價值
     if amount * ioc_p < MIN_NOTIONAL:
-        logger.warning(f"⚠️ {symbol} 訂單金額 {amount * ioc_p:.2f} 低於最小值 {MIN_NOTIONAL}")
+        logger.warning(f"⚠️ {symbol} Order notional {amount * ioc_p:.2f} below minimum {MIN_NOTIONAL}")
         return
 
-    # 🔥 修改點 6: 嚴格的槓桿錯誤處理
     try:
         exchange.set_leverage(int(MAX_LEVERAGE), symbol)
     except Exception as e:
         if "110043" in str(e):
-            pass  # 槓桿已設置，忽略
+            pass
         elif "110026" in str(e):
-            logger.error(f"❌ {symbol} 不支持 {MAX_LEVERAGE}x 槓桿，跳過入場")
+            logger.error(f"❌ {symbol} 10x leverage not supported, skipping.")
             return
         else:
-            logger.warning(f"⚠️ {symbol} 槓桿設置異常: {e}")
+            logger.warning(f"⚠️ {symbol} Leverage setup anomaly: {e}")
 
     try:
-        # 🔥 修改點 7: 第一步 - 只開倉，不帶止盈止損
+        # 第一步：開倉
         order = exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p,
                                       {'timeInForce': 'IOC', 'positionIdx': 0})
-
         time.sleep(1)
 
-        # 🔥 修改點 8: 第二步 - 獲取實際成交價和數量
-        order_detail = exchange.fetch_order(order['id'], symbol)
-        actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
-        actual_amount = float(order_detail.get('filled', 0))
+        # 🚨 第二步：防彈級訂單獲取邏輯
+        actual_price = ioc_p
+        actual_amount = 0
 
-        # 🔥 修改點 9: 檢查是否成交
+        try:
+            # 加入 params={"acknowledged": True} 嘗試解決 Bybit 警告
+            order_detail = exchange.fetch_order(order['id'], symbol, params={"acknowledged": True})
+            actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
+            actual_amount = float(order_detail.get('filled', 0))
+        except Exception as e:
+            logger.warning(f"⚠️ {symbol} Failed to fetch order, initiating fallback position sync: {e}")
+            time.sleep(0.5)
+            # 如果 API 報錯，直接查真實倉位
+            live_pos = exchange.fetch_positions()
+            for p in live_pos:
+                if p['symbol'] == symbol and float(p.get('contracts', 0) or p.get('size', 0)) > 0:
+                    actual_amount = float(p.get('contracts', 0) or p.get('size', 0))
+                    actual_price = float(p.get('entryPrice') or ioc_p)
+                    break
+
+        # 檢查數量，如果為0代表沒買到 (IOC取消)
         if actual_amount == 0:
-            logger.warning(f"❌ {symbol} IOC 訂單未成交，放棄入場")
+            print(f"⏩ {symbol} IOC order not filled, aborting.")
             return
 
-        # 🔥 修改點 10: 基於實際成交價計算止盈止損
         tp_p = float(exchange.price_to_precision(symbol, actual_price + (TP_ATR_MULT * atr)))
         sl_p = float(exchange.price_to_precision(symbol, actual_price - (SL_ATR_MULT * atr)))
 
-        # 🔥 修改點 11: 第三步 - 設置止盈止損
         try:
             exchange.private_post_v5_position_trading_stop({
                 'category': 'linear',
@@ -314,12 +316,10 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
                 'tpslMode': 'Full',
                 'positionIdx': 0
             })
-            print(f"✅ {symbol} 止盈止損已設置 | TP: {tp_p} | SL: {sl_p}")
+            print(f"✅ {symbol} TP/SL Set | TP: {tp_p} | SL: {sl_p}")
         except Exception as e:
-            logger.error(f"❌ {symbol} 止盈止損設置失敗: {e}")
-            # 即使止盈止損失敗，仍記錄倉位（後續可手動管理）
+            logger.error(f"❌ {symbol} TP/SL setup failed (local tracking unaffected): {e}")
 
-        # 🔥 修改點 12: 記錄倉位（使用實際成交價和數量）
         positions[symbol] = {
             'amount': actual_amount,
             'entry_price': actual_price,
@@ -334,8 +334,8 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         log_to_csv({
             'symbol': symbol,
             'action': 'ENTRY',
-            'price': actual_price,  # 🔥 使用實際價格
-            'amount': actual_amount,  # 🔥 使用實際數量
+            'price': actual_price,
+            'amount': actual_amount,
             'trade_value': round(actual_amount * actual_price, 2),
             'atr': round(atr, 4),
             'net_flow': round(net_flow, 2),
@@ -345,17 +345,17 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             'effective_balance': eff_bal
         })
 
-        print(f"🚀 [已入貨] {symbol} @ {actual_price:.4f} | 數量: {actual_amount}")
+        print(f"🚀 [ENTRY] {symbol} @ {actual_price:.4f} | Size: {actual_amount}")
 
     except Exception as e:
-        logger.error(f"❌ {symbol} 入場失敗: {e}")
+        logger.error(f"❌ {symbol} Entry Failed: {e}")
 
 
 # ==========================================
 # 5. 主程序
 # ==========================================
 def main():
-    print(f"🚀 AI 實戰 V6.0 FINAL (完全修復版) 啟動...")
+    print(f"🚀 AI AlgoTrade V6.0 FINAL (Safe Fallback Version) Started...")
     last_scout_time = 0
 
     while True:
@@ -367,41 +367,40 @@ def main():
                 regime = get_btc_regime()
 
                 if regime == 1:
-                    print("🟢 綠燈：執行海選掃描...")
-                    # 🔥 修改點 13: 使用現有函數避免重複代碼
+                    print("🟢 GREEN: Executing Top Coins Scouting...")
                     target_coins = scouting_top_coins(5)
 
                     for s in target_coins:
-                        # 🔥 修改點 14: 加入異常捕獲，避免單一幣種錯誤中斷整個循環
                         try:
                             flow, last_p, is_strong = apply_lee_ready_logic(s)
                             atr, is_v = get_market_metrics(s)
                             if last_p > 0:
                                 execute_live_long(s, flow, last_p, is_strong, atr, is_v)
                         except Exception as e:
-                            logger.warning(f"⚠️ {s} 分析失敗: {e}")
+                            logger.warning(f"⚠️ {s} Analysis Failed: {e}")
                             continue
                         time.sleep(0.5)
                 else:
-                    print(f"🚦 目前導航狀態為 {regime}，海選暫停。")
+                    print(f"🚦 Current Navigation Status: {regime}, Scouting Paused.")
 
                 last_scout_time = curr_t
-                print(f"⏳ 巡邏完畢 | 持倉: {list(positions.keys())} | 餘額: {get_live_usdt_balance():.2f}")
+                print(
+                    f"⏳ Patrol Complete | Positions: {list(positions.keys())} | Balance: {get_live_usdt_balance():.2f}")
 
             time.sleep(POSITION_CHECK_INTERVAL)
 
+        except KeyboardInterrupt:
+            print(
+                f"\n👋 Commander manually terminated. Balance: {get_live_usdt_balance():.2f} USDT | Positions: {list(positions.keys())}")
+            sys.exit(0)
+
         except Exception as e:
             if "10006" in str(e):
-                logger.warning("🚨 流量過載，休眠 30 秒...")
+                logger.warning("🚨 Rate limit exceeded, sleeping for 30s...")
                 time.sleep(30)
             else:
-                logger.error(f"⚠️ 主循環錯誤: {e}")
+                logger.error(f"⚠️ Main Loop Error: {e}")
                 time.sleep(10)
-
-        except KeyboardInterrupt:
-            print(f"\n👋 指揮官手動終止。餘額: {get_live_usdt_balance():.2f} USDT | 持倉: {list(positions.keys())}")
-            import sys;
-            sys.exit(0)
 
 
 if __name__ == "__main__":

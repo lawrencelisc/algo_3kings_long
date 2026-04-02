@@ -31,7 +31,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
     s_cfg = config['STRATEGY']
     rm_cfg = config['RISK_MANAGEMENT']
 
-    # ✅ 修正：冷卻時間檢查與過期條目清理
+    # 冷卻時間檢查與過期條目清理
     if symbol in cooldown_tracker:
         if time.time() < cooldown_tracker[symbol]:
             return
@@ -56,7 +56,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
     else:
         dynamic_risk = base_risk
 
-        # ✅ 修正：嚴謹的基於 ATR 之風險倉位計算公式
+    # 嚴謹的基於 ATR 之風險倉位計算公式
     risk_amount = eff_bal * dynamic_risk  # 願意承受的風險金額
     stop_loss_distance = atr * s_cfg['sl_atr_mult']  # 止損距離
 
@@ -71,7 +71,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
     amount = float(exchange.amount_to_precision(symbol, trade_val / current_price))
     if amount < exchange.markets[symbol]['limits']['amount']['min']: return
 
-    # ✅ 修正：獲取精準的最佳賣一價 (Best Ask) 避免滑價
+    # 獲取精準的最佳賣一價 (Best Ask) 避免滑價
     try:
         ob = exchange.fetch_order_book(symbol, limit=1)
         ioc_p = ob['asks'][0][0]
@@ -89,11 +89,31 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         order = exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p, {'timeInForce': 'IOC', 'positionIdx': 0})
         time.sleep(1)
 
-        order_detail = exchange.fetch_order(order['id'], symbol)
-        actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
-        actual_amount = float(order_detail.get('filled', 0))
+        # 🚨 核心修復區：安全地獲取實際成交價 (防止 Bybit IOC 報錯導致無限開倉)
+        actual_price = ioc_p
+        actual_amount = 0
 
-        if actual_amount == 0: return
+        try:
+            # 嘗試正規途徑拿訂單
+            order_detail = exchange.fetch_order(order['id'], symbol, params={"acknowledged": True})
+            actual_price = float(order_detail.get('average') or order_detail.get('price') or ioc_p)
+            actual_amount = float(order_detail.get('filled', 0))
+        except Exception as e:
+            # 全部改為英文輸出
+            logger.warning(f"⚠️ {symbol} Failed to fetch order, initiating fallback position sync: {e}")
+            time.sleep(0.5)
+            # 備用途徑：直接查倉位
+            live_pos = exchange.fetch_positions()
+            for p in live_pos:
+                if p['symbol'] == symbol and float(p.get('contracts', 0) or p.get('size', 0)) > 0:
+                    actual_amount = float(p.get('contracts', 0) or p.get('size', 0))
+                    actual_price = float(p.get('entryPrice') or ioc_p)
+                    break
+
+        if actual_amount == 0:
+            print(f"⏩ {symbol} IOC order not filled, aborting.")
+            return
+        # 🚨 修復區結束
 
         tp_p = float(exchange.price_to_precision(symbol, actual_price + (s_cfg['tp_atr_mult'] * atr)))
         sl_p = float(exchange.price_to_precision(symbol, actual_price - (s_cfg['sl_atr_mult'] * atr)))
@@ -104,8 +124,8 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
                 'stopLoss': str(sl_p), 'takeProfit': str(tp_p), 'tpslMode': 'Full', 'positionIdx': 0
             })
             print(f"✅ {symbol} TP/SL Set | TP: {tp_p} | SL: {sl_p}")
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ {symbol} TP/SL setup exception (local tracking unaffected): {e}")
 
         positions[symbol] = {
             'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p,
@@ -149,7 +169,7 @@ def manage_long_positions():
             if dist_to_tp < 0.0015 or dist_to_sl < 0.0015:
                 is_critical_zone = True
 
-            # ✅ 註解釐清：保本止損設於 1.0002 是為了獲利 0.3% 時，鎖定 0.02% 利潤以覆蓋 Maker/Taker 手續費
+            # 保本止損設於 1.0002 是為了獲利 0.3% 時，鎖定 0.02% 利潤以覆蓋 Maker/Taker 手續費
             if not pos['is_breakeven'] and pnl_pct > 0.003:
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0002, True, True
             if pos['is_breakeven']:
@@ -175,7 +195,7 @@ def manage_long_positions():
             if exit_reason:
                 print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
                 try:
-                    # ✅ 修正：平倉同樣抓取精準的最佳買一價 (Best Bid)
+                    # 平倉同樣抓取精準的最佳買一價 (Best Bid)
                     ob = exchange.fetch_order_book(s, limit=1)
                     ioc_price = ob['bids'][0][0]
                     exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
