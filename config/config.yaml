@@ -1,17 +1,78 @@
+# ==========================================
+# [STAGE 0] Bybit 帳號配置
+# 這裡對應 connect.py 中的 load_bybit_api_config("main_account")
+# ==========================================
 ACCOUNTS:
-#  Yamato:
-#    key: "fpirpvJmwub1uAzqA4"     # 艦長請確認子帳號 API 已開啟 Contract 交易
-#    secret: "9QQwKuZEg8e3YFKTYXSGj3MW9YBHlomeCrtJ"
-#    fleet: "Vanguard"
-#  Dreadnought:
-#    key: "xd8NcfedvibG9tP4iD"
-#    secret: "ZzGICmYtkDHyTWgT1UiGpiesjz9b26Mactbw"
-#    fleet: "Strike"
-  Yukikaze:
-    key: "1VjRtJ4cjuJiFk2wFs"
+  main_account:               # Name: Yukikaze
+    apiKey: "1VjRtJ4cjuJiFk2wFs"
     secret: "s5N38enwd75l0CxvIFLPFWWWmAbj2YxK941j"
-    fleet: "Hunter"
 
+# ==========================================
+# [STAGE 1] 全局交易約束 (TRADING)
+# 這裡對應 connect.py 中的 load_trading_params()
+# ==========================================
+TRADING:
+  working_capital: 1000.0     # 運作本金
+  max_leverage: 10.0          # 最大槓桿倍數
+  risk_per_trade: 0.01        # 每筆交易風險比例 (1%)
+  min_notional: 5.0           # Bybit 最小名義價值 (防止 Order too small)
+  scouting_interval: 120      # 海選掃描頻率 (秒)
+  pos_check_interval: 10      # 持倉巡邏與 Trail SL 更新頻率 (秒)
+
+# ==========================================
+# [STAGE 2] 策略核心參數 (STRATEGY)
+# 供參謀部計算指標使用
+# ==========================================
+STRATEGY:
+  net_flow_sigma: 1.5         # Lee-Ready 資金流偏離度門檻
+  tp_atr_mult: 1.5            # 止盈 ATR 倍數
+  sl_atr_mult: 1.0            # 初始止損 ATR 倍數
+  trail_atr_mult: 1.0         # 追蹤止損 ATR 步進倍數
+  btc_dev_threshold: 0.0025   # BTC 偏離 SMA20 啟動門檻 (0.25%)
+
+# ==========================================
+# [STAGE 3] 進階風險管理 (RISK_MANAGEMENT)
+# 預留給 Claude 提出的優化模組使用
+# ==========================================
+RISK_MANAGEMENT:
+  max_daily_drawdown: 0.05    # 單日最大回撤熔斷 (5%)
+  max_holding_hours: 4        # 持倉時間衰減 (小時)，超時動能消散則離場
+  min_imbalance_ratio: 0.2    # 訂單簿失衡度門檻 (買盤需比賣盤厚 20%)
+  cooldown_period: 3600       # 同一幣種平倉後的冷卻時間 (秒)
+
+# ==========================================
+# [STAGE 4] 通訊配置 (TG_BOT)
+# 這裡對應 connect.py 中的 load_tg_config()
+# ==========================================
 TG_BOT:
-  TOKEN: "8730258275:AAFAispAsUEIAwy6fAHXGV_3nERRSpbOp4Q"
-  GROUP_ID: "8394621040"
+  token: "8730258275:AAFAispAsUEIAwy6fAHXGV_3nERRSpbOp4Q"
+  chat_id: "8394621040"
+
+# ==========================================
+# [STAGE 5] 黑名單 (BLACKLIST)
+# 排除不需要交易的穩定幣、流動性質押代幣或特定幣種
+# ==========================================
+BLACKLIST:
+  - 'USDC/USDT:USDT'
+  - 'DAI/USDT:USDT'
+  - 'FDUSD/USDT:USDT'
+  - 'BUSD/USDT:USDT'
+  - 'TUSD/USDT:USDT'
+  - 'PYUSD/USDT:USDT'
+  - 'USDP/USDT:USDT'
+  - 'EURS/USDT:USDT'
+  - 'USDE/USDT:USDT'
+  - 'USAT/USDT:USDT'
+  - 'USD0/USDT:USDT'
+  - 'USTC/USDT:USDT'
+  - 'LUSD/USDT:USDT'
+  - 'FRAX/USDT:USDT'
+  - 'MIM/USDT:USDT'
+  - 'RLUSD/USDT:USDT'
+  - 'WBTC/USDT:USDT'
+  - 'WETH/USDT:USDT'
+  - 'WBNB/USDT:USDT'
+  - 'WAVAX/USDT:USDT'
+  - 'stETH/USDT:USDT'
+  - 'cbETH/USDT:USDT'
+  - 'WHT/USDT:USDT'
