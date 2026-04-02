@@ -7,10 +7,10 @@ import logging
 from datetime import datetime
 
 # ==========================================
-# 0. 日誌與系統設定
+# 0. 系統與日誌設定
 # ==========================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('AlgoTrade')
+logger = logging.getLogger('AlgoTrade_V5.9')
 
 # ⚠️ 請確保 API 金鑰安全
 API_KEY = "1VjRtJ4cjuJiFk2wFs"
@@ -30,28 +30,33 @@ if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 
 positions, cooldown_tracker = {}, {}
 
-# 👑 策略核心參數 (1000U / 10x 槓桿)
+# 👑 策略參數 (九大修正點：頻率分離)
 WORKING_CAPITAL, MAX_LEVERAGE, RISK_PER_TRADE = 1000.0, 10.0, 0.01
 NET_FLOW_SIGMA, TP_ATR_MULT, SL_ATR_MULT, TRAIL_ATR_MULT = 1.5, 1.5, 1.0, 1.0
+SCOUTING_INTERVAL = 120  # 海選掃描：120秒一次
+POSITION_CHECK_INTERVAL = 10  # 持倉管理：10秒一次 (修正 9)
 
-# 🚫 終極黑名單 (21 種穩定幣與包裝資產)
+# 🚀 恢復至 21+ 完整保護模式，防止 Bot 誤入「死水區」
 BLACKLIST = [
+    # 1. 傳統穩定幣 (1.00 附近死火，完全無趨勢可言)
     'USDC/USDT:USDT', 'DAI/USDT:USDT', 'FDUSD/USDT:USDT', 'BUSD/USDT:USDT',
-    'RLUSD/USDT:USDT', 'USDE/USDT:USDT', 'USAT/USDT:USDT', 'USD0/USDT:USDT',
-    'TUSD/USDT:USDT', 'PYUSD/USDT:USDT', 'USTC/USDT:USDT', 'EURS/USDT:USDT',
-    'USDP/USDT:USDT', 'LUSD/USDT:USDT', 'FRAX/USDT:USDT', 'MIM/USDT:USDT',
-    'WBTC/USDT:USDT', 'WETH/USDT:USDT', 'WBNB/USDT:USDT', 'WHT/USDT:USDT', 'WAVAX/USDT:USDT'
+    'TUSD/USDT:USDT', 'PYUSD/USDT:USDT', 'USDP/USDT:USDT', 'EURS/USDT:USDT',
+
+    # 2. 算法/合成穩定幣 (波動極小，不適合 Lee-Ready 邏輯)
+    'USDE/USDT:USDT', 'USAT/USDT:USDT', 'USD0/USDT:USDT', 'USTC/USDT:USDT',
+    'LUSD/USDT:USDT', 'FRAX/USDT:USDT', 'MIM/USDT:USDT', 'RLUSD/USDT:USDT',
+
+    # 3. Wrapped/LST 資產 (價格與原生幣掛鉤，會造成重複持倉風險)
+    'WBTC/USDT:USDT', 'WETH/USDT:USDT', 'WBNB/USDT:USDT', 'WAVAX/USDT:USDT',
+    'stETH/USDT:USDT', 'cbETH/USDT:USDT', 'WHT/USDT:USDT'
 ]
 
-CSV_COLUMNS = [
-    'timestamp', 'symbol', 'action', 'price', 'amount',
-    'trade_value', 'atr', 'net_flow', 'tp_price', 'sl_price',
-    'reason', 'realized_pnl', 'actual_balance', 'effective_balance'
-]
+CSV_COLUMNS = ['timestamp', 'symbol', 'action', 'price', 'amount', 'trade_value', 'atr', 'net_flow', 'tp_price',
+               'sl_price', 'reason', 'realized_pnl', 'actual_balance', 'effective_balance']
 
 
 # ==========================================
-# 1. 核心輔助功能
+# 1. 核心輔助模組
 # ==========================================
 def log_to_csv(data_dict):
     row = {col: '' for col in CSV_COLUMNS}
@@ -68,11 +73,10 @@ def get_live_usdt_balance():
         return 0.0
 
 
-def cancel_all_conditional_orders(symbol):
+def cancel_all_v5(symbol):
     try:
-        exchange.cancel_all_orders(symbol, params={'unfilledOrderType': 'ConditionalOrder'})
-        exchange.cancel_all_orders(symbol)
-        print(f"🧹 {symbol} 物理清場完成 (SL/TP + Limit)")
+        exchange.cancel_all_orders(symbol, params={'orderFilter': 'Order'})
+        exchange.cancel_all_orders(symbol, params={'orderFilter': 'StopOrder'})  # 修正 1
     except:
         pass
 
@@ -83,7 +87,9 @@ def get_market_metrics(symbol):
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df['tr'] = np.maximum(df['h'] - df['l'],
                               np.maximum(abs(df['h'] - df['c'].shift(1)), abs(df['l'] - df['c'].shift(1))))
-        atr = df['tr'].rolling(14).mean().iloc[-1]
+        # 🚀 修正 4：防止 ATR 返回 NaN
+        atr = df['tr'].rolling(14, min_periods=1).mean().iloc[-1]
+        if pd.isna(atr) or atr == 0: return None, False
         is_volatile = (atr / df['c'].iloc[-1]) > 0.0005
         return atr, is_volatile
     except:
@@ -100,26 +106,29 @@ def get_3_layer_avg_price(symbol, side='asks'):
 
 
 # ==========================================
-# 2. 導航與海選 (V5.8 鋼鐵邏輯)
+# 2. 導航與海選 (修正 6 & 8)
 # ==========================================
 def get_btc_regime():
     try:
-        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=50)
+        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=60)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         current_price = df['c'].iloc[-1]
         sma20 = df['c'].rolling(20).mean().iloc[-1]
+        sma50 = df['c'].rolling(50).mean().iloc[-1]  # 🚀 修正 6：加入長線確認
+
         deviation = (current_price - sma20) / sma20
-        # 門檻建議改為 0.0025 (即 0.25%) 來放寬
-        if deviation > 0.0025:
-            status, signal = "🟢 綠燈 (多頭)", 1
+        # 🟢 進場條件：偏離度 > 0.25% 且 短線在長線之上
+        if deviation > 0.0025 and sma20 > sma50:
+            status, signal = "🟢 綠燈 (趨勢確認)", 1
         elif deviation < -0.0025:
-            status, signal = "🔴 紅燈 (空頭)", -1
+            status, signal = "🔴 紅燈", -1
         else:
-            status, signal = "🟡 黃燈 (震盪)", 0
-        print(f"📊 BTC 導航 | 現價: {current_price:.1f} | SMA20: {sma20:.1f} | 偏離: {deviation:.2%} | {status}")
+            status, signal = "🟡 黃燈", 0
+
+        print(
+            f"📊 BTC | Price: {current_price:.0f} | Dev: {deviation:.2%} | Trend: {'UP' if sma20 > sma50 else 'DW'} | {status}")
         return signal
-    except Exception as e:
-        if "10006" in str(e): time.sleep(10)
+    except:
         return 0
 
 
@@ -130,8 +139,7 @@ def scouting_top_coins(n=5):
                 for s, t in tickers.items() if
                 s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None]
         df = pd.DataFrame(data)
-        if df.empty: return []
-        return df.sort_values('volume', ascending=False).head(50).sort_values('change', ascending=False).head(n)[
+        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)[
             'symbol'].tolist()
     except:
         return []
@@ -146,41 +154,39 @@ def apply_lee_ready_logic(symbol):
         df['dir'] = np.where(df['price'] > midpoint, 1, np.where(df['price'] < midpoint, -1, 0))
         df['tick'] = df['price'].diff().apply(np.sign).replace(0, np.nan).ffill().fillna(0)
         df['final'] = np.where(df['dir'] != 0, df['dir'], df['tick'])
-        flow = df['final'] * df['amount']
-        net_flow = flow.sum()
-        is_strong = net_flow > (flow.std() * NET_FLOW_SIGMA)
+        # 🚀 修正 8：改用金額加權流向 (Price * Amount)
+        df['weighted_flow'] = df['final'] * df['amount'] * df['price']
+        net_flow = df['weighted_flow'].sum()
+        is_strong = net_flow > (df['weighted_flow'].std() * NET_FLOW_SIGMA)
         return net_flow, df['price'].iloc[-1], is_strong
     except:
         return 0, 0, False
 
 
 # ==========================================
-# 3. 交易管理 (三段式平倉 + ATR 追蹤)
+# 3. 持倉管理 (修正 2 & 3)
 # ==========================================
 def manage_long_positions():
-    for s in list(positions.keys()):
-        try:
-            pos_info = exchange.fetch_position(s)
-            actual_size = float(pos_info.get('contracts', 0) or pos_info.get('size', 0))
+    try:
+        # 🚀 修正 2：重新對齊交易所實際倉位，清理幽靈倉位
+        live_positions_raw = exchange.fetch_positions()
+        live_symbols = {p['symbol']: p for p in live_positions_raw if
+                        float(p.get('contracts', 0) or p.get('size', 0)) > 0}
 
-            if actual_size == 0:  # 偵測原生平倉
-                pos = positions[s]
-                curr_p = exchange.fetch_ticker(s)['last']
-                print(f"✅ {s} 偵測到物理平倉 (Bybit SL/TP)")
-                log_to_csv({'symbol': s, 'action': 'LIVE_LONG_EXIT_NATIVE', 'price': curr_p, 'amount': pos['amount'],
-                            'reason': 'Bybit Native TP/SL',
-                            'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4),
-                            'actual_balance': round(get_live_usdt_balance(), 2)})
-                cancel_all_conditional_orders(s)
-                if s in positions: del positions[s]; continue
+        for s in list(positions.keys()):
+            if s not in live_symbols:
+                print(f"🧹 清理幽靈倉位或已手動平倉之標的: {s}")
+                del positions[s]
+                continue
 
+        for s in list(positions.keys()):
             curr_p, pos = exchange.fetch_ticker(s)['last'], positions[s]
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
             sl_updated = False
 
-            if not pos['is_breakeven'] and pnl_pct > 0.003:  # 保本
+            if not pos['is_breakeven'] and pnl_pct > 0.003:
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0002, True, True
-            if pos['is_breakeven']:  # 追蹤止損
+            if pos['is_breakeven']:
                 trail_sl = curr_p - (TRAIL_ATR_MULT * pos['atr'])
                 if trail_sl > pos['sl_price']: pos['sl_price'], sl_updated = trail_sl, True
 
@@ -190,138 +196,100 @@ def manage_long_positions():
                     exchange.private_post_v5_position_trading_stop(
                         {'category': 'linear', 'symbol': exchange.market_id(s), 'stopLoss': str(f_sl),
                          'tpslMode': 'Full', 'positionIdx': 0})
-                    log_to_csv({'symbol': s, 'action': 'SYNC_SL', 'price': f_sl, 'reason': 'Trailing/BE'})
                 except:
                     pass
 
-            # 智能平倉觸發
+            # 🚀 修正 3：簡化平倉邏輯，高波動下直接使用 IOC
             exit_reason = None
             if curr_p >= pos['tp_price']:
-                exit_reason = "Take Profit (Smart Exit)"
+                exit_reason = "TP (IOC)"
             elif curr_p <= pos['sl_price'] and not pos['is_breakeven']:
-                exit_reason = "Stop Loss (Smart Exit)"
+                exit_reason = "SL (IOC)"
 
             if exit_reason:
-                print(f"⚔️ 執行三段式平倉: {s}")
+                print(f"⚔️ 觸發 {exit_reason}，執行 IOC 平倉: {s}")
                 try:
-                    m_p = get_3_layer_avg_price(s, 'bids') or curr_p
-                    m_order = exchange.create_order(s, 'limit', 'sell', pos['amount'], m_p,
-                                                    {'postOnly': True, 'reduceOnly': True})
-                    time.sleep(10)
-                    if exchange.fetch_order(m_order['id'], s)['status'] != 'closed':
-                        exchange.cancel_order(m_order['id'], s)
-                        ioc_p = get_3_layer_avg_price(s, 'bids') or curr_p
-                        exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_p,
-                                              {'timeInForce': 'IOC', 'reduceOnly': True})
+                    ioc_price = get_3_layer_avg_price(s, 'bids') or curr_p
+                    exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
+                                          {'timeInForce': 'IOC', 'reduceOnly': True})
                 except:
                     exchange.create_market_sell_order(s, pos['amount'], {'reduceOnly': True})
 
-                log_to_csv({'symbol': s, 'action': 'LIVE_LONG_EXIT_SMART', 'price': curr_p, 'amount': pos['amount'],
-                            'reason': exit_reason,
-                            'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4),
-                            'actual_balance': round(get_live_usdt_balance(), 2)})
-                cancel_all_conditional_orders(s);
+                log_to_csv(
+                    {'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
+                     'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)})
+                cancel_all_v5(s);
                 del positions[s]
-        except Exception as e:
-            if "10006" in str(e): time.sleep(5)
-            if "order not exists" in str(e).lower(): del positions[s]
+    except Exception as e:
+        if "10006" in str(e): time.sleep(5)
 
 
 # ==========================================
-# 4. 入貨執行 (物理清場版)
+# 4. 執行與主程序 (修正 5 & 7 & 9)
 # ==========================================
 def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
-    if symbol in cooldown_tracker and time.time() < cooldown_tracker[symbol].get('cooldown_until', 0): return
+    if symbol in cooldown_tracker and time.time() < cooldown_tracker[symbol]: return
     if is_strong and is_volatile and symbol not in positions:
-        cancel_all_conditional_orders(symbol)  # 🚀 入貨前必清場
+        cancel_all_v5(symbol)
         actual_bal = get_live_usdt_balance()
         eff_bal = min(WORKING_CAPITAL, actual_bal)
         trade_val = min((eff_bal * RISK_PER_TRADE) / (atr / current_price), eff_bal * MAX_LEVERAGE * 0.95)
         amount = float(exchange.amount_to_precision(symbol, trade_val / current_price))
         if amount < exchange.markets[symbol]['limits']['amount']['min']: return
-        ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
-        tp_p = float(exchange.price_to_precision(symbol, ioc_p + (TP_ATR_MULT * atr)))
-        sl_p = float(exchange.price_to_precision(symbol, ioc_p - (SL_ATR_MULT * atr)))
+
+        # 🚀 修正 5：記錄槓桿設置錯誤
         try:
-            try:
-                exchange.set_leverage(int(MAX_LEVERAGE), symbol)
-            except:
-                pass
-            # 🚀 Bybit V5 參數字串化
-            params = {'timeInForce': 'IOC', 'stopLoss': str(sl_p), 'takeProfit': str(tp_p), 'positionIdx': 0}
-            order = exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p, params)
-            fill_p = order['average'] if order.get('average') else ioc_p
-            positions[symbol] = {'amount': amount, 'entry_price': fill_p, 'tp_price': tp_p, 'sl_price': sl_p,
+            exchange.set_leverage(int(MAX_LEVERAGE), symbol)
+        except Exception as e:
+            logger.warning(f"⚠️ {symbol} 槓桿設置失敗: {e}")
+
+        ioc_p = get_3_layer_avg_price(symbol, 'asks') or current_price
+        tp_p, sl_p = ioc_p + (TP_ATR_MULT * atr), ioc_p - (SL_ATR_MULT * atr)
+
+        try:
+            params = {'timeInForce': 'IOC', 'stopLoss': str(exchange.price_to_precision(symbol, sl_p)),
+                      'takeProfit': str(exchange.price_to_precision(symbol, tp_p)), 'positionIdx': 0}
+            exchange.create_order(symbol, 'limit', 'buy', amount, ioc_p, params)
+            positions[symbol] = {'amount': amount, 'entry_price': ioc_p, 'tp_price': tp_p, 'sl_price': sl_p,
                                  'is_breakeven': False, 'atr': atr}
-            log_to_csv({'symbol': symbol, 'action': 'LIVE_LONG_ENTRY', 'price': fill_p, 'amount': amount,
-                        'trade_value': round(amount * fill_p, 2), 'atr': round(atr, 4), 'net_flow': round(net_flow, 2),
+            # 🚀 修正 7：設置冷卻時間
+            cooldown_tracker[symbol] = time.time() + 3600
+            log_to_csv({'symbol': symbol, 'action': 'ENTRY', 'price': ioc_p, 'amount': amount,
+                        'trade_value': round(amount * ioc_p, 2), 'atr': round(atr, 4), 'net_flow': round(net_flow, 2),
                         'tp_price': tp_p, 'sl_price': sl_p, 'actual_balance': round(actual_bal, 2),
                         'effective_balance': eff_bal})
-            print(f"🚀 [已入貨] {symbol} | SL: {sl_p}")
+            print(f"🚀 [已入貨] {symbol}")
         except Exception as e:
-            print(f"❌ {symbol} 入貨失敗: {e}")
-
-# ==========================================
-# 5. 倉存更新
-# ==========================================
-
-def sync_positions_from_exchange():
-    """啟動時自動接管 Bybit 上的現有持倉"""
-    try:
-        response = exchange.fetch_positions()
-        for pos in response:
-            size = float(pos.get('contracts', 0) or pos.get('size', 0))
-            if size > 0: # 只接管多單 (Long)
-                symbol = pos['symbol']
-                entry_price = float(pos['entryPrice'])
-                # 補回基本數據，等 Bot 知道要管呢隻幣
-                if symbol not in positions:
-                    atr, _ = get_market_metrics(symbol)
-                    positions[symbol] = {
-                        'amount': size,
-                        'entry_price': entry_price,
-                        'tp_price': entry_price * 1.05, # 暫定 5% 止盈
-                        'sl_price': entry_price * 0.95, # 暫定 5% 止損
-                        'is_breakeven': False,
-                        'atr': atr if atr else 0
-                    }
-                    print(f"📥 已接管現有持倉: {symbol} | 入場價: {entry_price}")
-    except Exception as e:
-        print(f"⚠️ 接管持倉失敗: {e}")
+            print(f"❌ {symbol} 失敗: {e}")
 
 
-# ==========================================
-# 6. 主程式 (呼吸延時 + 全局保護)
-# ==========================================
 def main():
-    print(f"🚀 AI 做多實戰 V5.8 FINAL 啟動...")
-    sync_positions_from_exchange()
-    try:
-        while True:
-            try:
-                manage_long_positions()
-                time.sleep(0.5)
+    print(f"🚀 AI 實戰 V5.9 (缺陷修正版) 啟動...")
+    last_scout_time = 0
+    while True:
+        try:
+            # 🚀 修正 9：高頻率檢查持倉 (10秒一次)
+            manage_long_positions()
+
+            # 分離海選掃描 (120秒一次)
+            current_time = time.time()
+            if current_time - last_scout_time > SCOUTING_INTERVAL:
                 regime = get_btc_regime()
                 if regime == 1:
-                    print("🟢 BTC 綠燈：執行海選...");
-                    time.sleep(0.5)
-                    target_coins = scouting_top_coins(5)
-                    for s in target_coins:
-                        print(f"🔍 分析 {s}...");
-                        time.sleep(0.5)  # 😴 呼吸延時
+                    for s in scouting_top_coins(5):
                         flow, last_p, is_strong = apply_lee_ready_logic(s)
                         atr, is_volatile = get_market_metrics(s)
                         if last_p > 0: execute_live_long(s, flow, last_p, is_strong, atr, is_volatile)
-                print(f"⏳ 巡邏完畢 | 持倉: {list(positions.keys())} | 餘額: {get_live_usdt_balance():.2f}")
-            except Exception as e:
-                if "10006" in str(e):
-                    print("🚨 流量過載！全局休眠 30 秒...");
-                    time.sleep(30)
-                else:
-                    logger.error(f"⚠️ 主迴圈錯誤: {e}")
-            time.sleep(120)
-    except KeyboardInterrupt:
-        logger.warning('接收到鍵盤中斷信號；程式已終止')
+                        time.sleep(0.5)
+                last_scout_time = current_time
+                print(f"⏳ 巡邏中... 持倉: {list(positions.keys())}")
+
+            time.sleep(POSITION_CHECK_INTERVAL)  # 修正 9：主循環改為短休眠
+        except Exception as e:
+            if "10006" in str(e):
+                time.sleep(30)
+            else:
+                logger.error(f"⚠️ 異常: {e}"); time.sleep(10)
 
 
 if __name__ == "__main__":
