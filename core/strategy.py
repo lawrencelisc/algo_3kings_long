@@ -30,7 +30,7 @@ def get_btc_regime():
 
         print("-" * 60)
         print(f"📈 BTC Live Status (Long) | Price: {curr_p:.0f}")
-        print(f"1️⃣ Price Threshold: {curr_p:.0f} > {target_long:.0f} {tick_p}")
+        print(f"1️⃣ Price Threshold: curr({curr_p:.0f}) > target({target_long:.0f}) {tick_p}")
         print(f"2️⃣ Trend Confirmation: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
         print(f"🚦 Final Decision: {status}")
         print("-" * 60)
