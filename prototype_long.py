@@ -4,6 +4,7 @@ import time
 import numpy as np
 import os
 import logging
+import sys
 from datetime import datetime
 
 # ==========================================
@@ -23,7 +24,7 @@ exchange = ccxt.bybit({
 })
 exchange.load_markets()
 
-LOG_DIR = "core/result_long_live"
+LOG_DIR = "result_long_live"
 LOG_FILE = f"{LOG_DIR}/09_live_long_log.csv"
 if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 
@@ -105,21 +106,41 @@ def get_btc_regime():
     try:
         ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=60)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        current_price = df['c'].iloc[-1]
+        curr_p = df['c'].iloc[-1]
         sma20 = df['c'].rolling(20).mean().iloc[-1]
         sma50 = df['c'].rolling(50).mean().iloc[-1]
 
-        deviation = (current_price - sma20) / sma20
-        if deviation > 0.0025 and sma20 > sma50:
-            status, signal = "🟢 綠燈 (趨勢確認)", 1
-        elif deviation < -0.0025:
-            status, signal = "🔴 紅燈", -1
+        # 🚀 多頭核心門檻 (目前維持 Hard-code 0.0025)
+        target_long = sma20 * (1 + 0.0025)
+        deviation = (curr_p - sma20) / sma20
+
+        # 📊 多頭條件檢查
+        cond_price = curr_p > target_long  # 價格是否突破目標位
+        cond_trend = sma20 > sma50  # 趨勢是否為多頭排列 (黃金交叉)
+
+        # 轉化為視覺圖標
+        tick_p = "✅" if cond_price else "❌"
+        tick_t = "✅" if cond_trend else "❌"
+
+        # 🚦 燈號邏輯
+        if cond_price and cond_trend:
+            status, signal = "🟢 綠燈 (多頭全軍出擊)", 1
+        elif cond_price or cond_trend:
+            status, signal = "🟡 黃燈 (條件未齊 - 觀望)", 0
         else:
-            status, signal = "🟡 黃燈", 0
-        print(
-            f"📊 BTC | Price: {current_price:.0f} | Dev: {deviation:.2%} | Trend: {'UP' if sma20 > sma50 else 'DW'} | {status}")
+            status, signal = "🔴 紅燈 (空頭強勢 - 禁入)", -1
+
+        # 🚀 終極視覺化 Presentation
+        print("-" * 60)
+        print(f"📈 BTC 實時戰報 (Long) | 現價: {curr_p:.0f}")
+        print(f"1️⃣ 價格門檻: {curr_p:.0f} > {target_long:.0f} {tick_p}")
+        print(f"2️⃣ 趨勢確認: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
+        print(f"🚦 最終決策: {status}")
+        print("-" * 60)
+
         return signal
-    except:
+    except Exception as e:
+        print(f"⚠️ 導航故障: {e}")
         return 0
 
 
@@ -376,6 +397,11 @@ def main():
             else:
                 logger.error(f"⚠️ 主循環錯誤: {e}")
                 time.sleep(10)
+
+        except KeyboardInterrupt:
+            print(f"\n👋 指揮官手動終止。餘額: {get_live_usdt_balance():.2f} USDT | 持倉: {list(positions.keys())}")
+            import sys;
+            sys.exit(0)
 
 
 if __name__ == "__main__":
