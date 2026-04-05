@@ -11,6 +11,7 @@ logger = logging.getLogger('AlgoTrade_V6_Main')
 
 def main():
     print(f"🚀 AI AlgoTrade V6.0 Modular Final (Event-Driven) Started...")
+    print(f"Lee-Ready Money Flow + Order Book Imbalance + P95 Filter # Initializing...")
     last_scout_time = 0
     t_cfg = config['TRADING']
 

@@ -1,5 +1,8 @@
+import os
 import pandas as pd
 import numpy as np
+
+from datetime import datetime
 from core.connect import exchange, config
 
 
@@ -7,6 +10,20 @@ from core.connect import exchange, config
 BLACKLIST = ['USDC/USDT:USDT', 'BUSD/USDT:USDT', 'EUR/USDT:USDT'] # 穩定幣黑名單
 NET_FLOW_SIGMA = 2.0         # Z-Score 資金流入門檻
 MIN_IMBALANCE_RATIO = 0.2    # 買盤牆厚度門檻
+
+STATUS_DIR = "status"
+STATUS_FILE = f"{STATUS_DIR}/btc_status_long.csv"
+STATUS_COLUMNS = ['timestamp', 'btc_price', 'target_price', 'sma20', 'sma50', 'signal_code', 'decision_text']
+
+if not os.path.exists(STATUS_DIR): os.makedirs(STATUS_DIR)
+
+
+def log_status_to_csv(data_dict):
+    row = {col: '' for col in STATUS_COLUMNS}
+    row.update(data_dict)
+    row['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pd.DataFrame([row], columns=STATUS_COLUMNS).to_csv(STATUS_FILE, mode='a', index=False,
+                                                       header=not os.path.exists(STATUS_FILE))
 
 
 def get_btc_regime():
@@ -28,11 +45,21 @@ def get_btc_regime():
         tick_t = "✅" if cond_trend else "❌"
 
         if cond_price and cond_trend:
-            status, signal = "🟢 GREEN (Bullish - All in)", 1
+            status, signal = "🟢 GREEN   (Bullish - All in)", 1
         elif cond_price or cond_trend:
-            status, signal = "🟡 YELLOW (Conditions unmet - Standby)", 0
+            status, signal = "🟡 YELLOW  (Conditions unmet - Standby)", 0
         else:
-            status, signal = "🔴 RED (Bearish - Do not enter)", -1
+            status, signal = "🔴 RED     (Bearish - Do not enter)", -1
+
+        report_data = {
+            'btc_price': round(curr_p, 2),
+            'target_price': round(target_long, 2),
+            'sma20': round(sma20, 2),
+            'sma50': round(sma50, 2),
+            'signal_code': signal,
+            'decision_text': status
+        }
+        log_status_to_csv(report_data)
 
         print("-" * 60)
         print(f"📈 BTC Live Status (Long) | Price: {curr_p:.0f}")
