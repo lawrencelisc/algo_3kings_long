@@ -4,8 +4,8 @@
 # ==========================================
 ACCOUNTS:
   main_account:               # Name: Yukikaze
-    apiKey: "1VjRtJ4cjuJiFk2wFs"
-    secret: "s5N38enwd75l0CxvIFLPFWWWmAbj2YxK941j"
+    apiKey: "xd8NcfedvibG9tP4iD"
+    secret: "ZzGICmYtkDHyTWgT1UiGpiesjz9b26Mactbw"
 
 # ==========================================
 # [STAGE 1] 全局交易約束 (TRADING)

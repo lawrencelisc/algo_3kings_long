@@ -13,8 +13,8 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('AlgoTrade_V6.0_Final')
 
-API_KEY = "1VjRtJ4cjuJiFk2wFs"
-API_SECRET = "s5N38enwd75l0CxvIFLPFWWWmAbj2YxK941j"
+API_KEY = ""
+API_SECRET = ""
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
@@ -198,6 +198,11 @@ def get_btc_regime():
 def scouting_top_coins(n=5):
     try:
         tickers = exchange.fetch_tickers()
+        # ❌ 舊代碼
+        # data = [{'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']}
+        #         for s, t in tickers.items() if
+        #         s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None]
+
         # ✅ 新增代碼：加入 Spread 過濾
         data = []
         for s, t in tickers.items():
@@ -217,6 +222,22 @@ def scouting_top_coins(n=5):
 
 
 def apply_lee_ready_logic(symbol):
+    # ❌ 舊代碼
+    # try:
+    #     ob = exchange.fetch_order_book(symbol)
+    #     midpoint = (ob['bids'][0][0] + ob['asks'][0][0]) / 2
+    #     trades = exchange.fetch_trades(symbol, limit=200)
+    #     df = pd.DataFrame(trades, columns=['price', 'amount', 'timestamp'])
+    #     df['dir'] = np.where(df['price'] > midpoint, 1, np.where(df['price'] < midpoint, -1, 0))
+    #     df['tick'] = df['price'].diff().apply(np.sign).replace(0, np.nan).ffill().fillna(0)
+    #     df['final'] = np.where(df['dir'] != 0, df['dir'], df['tick'])
+    #     df['weighted_flow'] = df['final'] * df['amount'] * df['price']
+    #     net_flow = df['weighted_flow'].sum()
+    #     is_strong = net_flow > (df['weighted_flow'].std() * NET_FLOW_SIGMA)
+    #     return net_flow, df['price'].iloc[-1], is_strong
+    # except:
+    #     return 0, 0, False
+
     # ✅ 新增代碼：Lee-Ready 資金流邏輯 + 訂單簿失衡度 (Imbalance) + P95濾網 [終極做多版]
     try:
         ob = exchange.fetch_order_book(symbol, limit=20)
@@ -270,6 +291,33 @@ def manage_long_positions():
         live_symbols = {p['symbol']: p for p in live_positions_raw if
                         float(p.get('contracts', 0) or p.get('size', 0)) > 0}
 
+        # ❌ 舊代碼
+        # for s in list(positions.keys()):
+        #     if s not in live_symbols:
+        #         print(f"🧹 交易所已自動平倉 (TP/SL)，清理本地紀錄: {s}")
+        #
+        #         # 📝 補漏：為「交易所原生平倉」補寫 CSV 紀錄
+        #         try:
+        #             curr_p = exchange.fetch_ticker(s)['last']
+        #             pos = positions[s]
+        #             # 做空 PnL 估算
+        #             est_pnl = round((curr_p - pos['entry_price']) * pos['amount'], 4)
+        #             log_to_csv({
+        #                 'symbol': s,
+        #                 'action': 'NATIVE_EXIT',
+        #                 'price': curr_p,
+        #                 'amount': pos['amount'],
+        #                 'reason': 'Bybit Native TP/SL',
+        #                 'realized_pnl': est_pnl
+        #             })
+        #         except Exception as e:
+        #             pass  # 即使攞價錢失敗，都照樣繼續清理
+        #
+        #         cancel_all_v5(s)
+        #         # 🚨 修復：絕對不刪除冷卻時間，必須硬性坐滿 1 小時！
+        #         del positions[s]
+        #         continue
+
         # ✅ 新增代碼：處理真實 PnL 結算單及非對稱冷卻
         for s in list(positions.keys()):
             if s not in live_symbols:
@@ -293,6 +341,10 @@ def manage_long_positions():
             curr_p, pos = exchange.fetch_ticker(s)['last'], positions[s]
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
             sl_updated = False
+
+            # ❌ 舊代碼
+            # if not pos['is_breakeven'] and pnl_pct > 0.003:
+            #     pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0002, True, True
 
             # ✅ 新增代碼：0.15% (1.0015) 確保能完全覆蓋 Bybit 雙向 Taker 手續費 (0.11%) 及潛在滑價
             if not pos['is_breakeven'] and pnl_pct > 0.003:
@@ -328,6 +380,11 @@ def manage_long_positions():
 
                 # ✅ 新增代碼：先計好利潤 (Long)
                 ioc_pnl = round((curr_p - pos['entry_price']) * pos['amount'], 4)
+
+                # ❌ 舊代碼
+                # log_to_csv(
+                #     {'symbol': s, 'action': 'EXIT', 'price': curr_p, 'amount': pos['amount'], 'reason': exit_reason,
+                #      'realized_pnl': round((curr_p - pos['entry_price']) * pos['amount'], 4)})
 
                 # ✅ 新增代碼
                 log_to_csv(
