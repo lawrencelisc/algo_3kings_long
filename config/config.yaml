@@ -20,12 +20,12 @@ TRADING:
   pos_check_interval: 10      # 持倉巡邏與 Trail SL 更新頻率 (秒)
 
 # ==========================================
-# [STAGE 2] 策略核心參數 (STRATEGY)
+# [STAGE 2] 策略核心參數 (STRATEGY) - 妖幣特化版
 # 供參謀部計算指標使用
 # ==========================================
 STRATEGY:
-  net_flow_sigma: 1.5         # Lee-Ready 資金流偏離度門檻
-  tp_atr_mult: 1.5            # 止盈 ATR 倍數
+  net_flow_sigma: 2.0         # Lee-Ready 資金流偏離度門檻 🚀 由 1.5 恢復 2.0 高門檻 (防禦散戶雜音，確認莊家真金白銀)
+  tp_atr_mult: 2.5            # 止盈 ATR 倍數 🚀 由 1.5 妖幣爆發力強，TP 設 2.5 (大約等於 2.5 倍波動率利潤)
   sl_atr_mult: 1.0            # 初始止損 ATR 倍數
   trail_atr_mult: 1.0         # 追蹤止損 ATR 步進倍數
   btc_dev_threshold: 0.0025   # BTC 偏離 SMA20 啟動門檻 (0.25%)

@@ -161,10 +161,17 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             cancel_all_v5(symbol)
             return
 
-        # 🚨 修復區結束
 
         tp_p = float(exchange.price_to_precision(symbol, actual_price + (s_cfg['tp_atr_mult'] * atr)))
         sl_p = float(exchange.price_to_precision(symbol, actual_price - (s_cfg['sl_atr_mult'] * atr)))
+
+        # 🛠️ 舊代碼保留：if expected_profit_margin < 0.003:
+        # 🚀 妖幣特化 3：防禦嚴重滑價 (Slippage)，預期利潤空間必須大於 0.6%！
+        expected_profit_margin = (tp_p - actual_price) / actual_price
+        if expected_profit_margin < 0.006:
+            print(f"🟡 放棄妖幣 [{symbol}]: 預期利潤空間 ({expected_profit_margin * 100:.2f}%) 太細，連滑價都賠唔起！")
+            cancel_all_v5(symbol)
+            return  # 直接中斷，唔做接盤俠
 
         try:
             exchange.private_post_v5_position_trading_stop({
