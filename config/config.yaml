@@ -3,7 +3,7 @@
 # 這裡對應 connect.py 中的 load_bybit_api_config("main_account")
 # ==========================================
 ACCOUNTS:
-  main_account:               # Name: Yukikaze
+  main_account:               # Name: Dreadnought
     apiKey: "xd8NcfedvibG9tP4iD"
     secret: "ZzGICmYtkDHyTWgT1UiGpiesjz9b26Mactbw"
 
@@ -16,8 +16,8 @@ TRADING:
   max_leverage: 10.0          # 最大槓桿倍數
   risk_per_trade: 0.01        # 每筆交易風險比例 (1%)
   min_notional: 5.0           # Bybit 最小名義價值 (防止 Order too small)
-  scouting_interval: 120      # 海選掃描頻率 (秒)
-  pos_check_interval: 10      # 持倉巡邏與 Trail SL 更新頻率 (秒)
+  scouting_interval: 130      # 海選掃描頻率 (秒)  由 120 恢復 130 （ver. 2026-04-07)
+  pos_check_interval: 14      # 持倉巡邏與 Trail SL 更新頻率 (秒) 由 10 恢復 14（ver. 2026-04-07)
 
 # ==========================================
 # [STAGE 2] 策略核心參數 (STRATEGY) - 妖幣特化版

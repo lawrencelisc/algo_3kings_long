@@ -15,7 +15,8 @@ exchange = ccxt.bybit({
     'apiKey': config['ACCOUNTS']['main_account']['apiKey'],
     'secret': config['ACCOUNTS']['main_account']['secret'],
     'enableRateLimit': True,
-    'options': {'defaultType': 'swap'}
+    'options': {'defaultType': 'swap'},
+    'hostname': 'api.bytick.com',
 })
 exchange.load_markets()
 

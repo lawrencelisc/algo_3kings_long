@@ -262,11 +262,22 @@ def manage_long_positions():
                 except:
                     pass
 
+            # exit_reason = None
+            # if curr_p >= pos['tp_price']:
+            #     exit_reason = "TP (IOC)"
+            # elif curr_p <= pos['sl_price'] and not pos['is_breakeven']:
+            #     exit_reason = "SL (IOC)"
+
+            # 🚀 升級版：喚醒本地 Trail SL 攔截機制
             exit_reason = None
             if curr_p >= pos['tp_price']:
                 exit_reason = "TP (IOC)"
-            elif curr_p <= pos['sl_price'] and not pos['is_breakeven']:
-                exit_reason = "SL (IOC)"
+            elif curr_p <= pos['sl_price']:
+                # 如果已經解鎖保本，就叫佢 "Trail SL"，否則叫 "SL"
+                if pos['is_breakeven']:
+                    exit_reason = "Trail SL (IOC)"
+                else:
+                    exit_reason = "SL (IOC)"
 
             if exit_reason:
                 print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
