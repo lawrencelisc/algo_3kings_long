@@ -170,7 +170,7 @@ def get_btc_regime():
         print(f"📊 BTC 實時戰報 (Long 多頭 HMA+ADX版) | 現價: {curr_p:.0f}")
         print(f"1️⃣ 極速升勢: HMA20({hma20_val:.0f}) > HMA50({hma50_val:.0f}) {tick_t}")  # <--- 改為大於
         print(f"2️⃣ 趨勢強度: ADX > 22 {tick_a}")
-        print(f"3️⃣ 動能確認: 當前成交量 > 20H均量 {tick_v}")
+        print(f"3️⃣ 動能確認: 當前量 > 24H中位數(80%) {tick_v}")
         print(f"🚦 最終決策: {status}")
         print("-" * 60)
 
