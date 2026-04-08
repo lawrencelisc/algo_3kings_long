@@ -26,51 +26,157 @@ def log_status_to_csv(data_dict):
                                                        header=not os.path.exists(STATUS_FILE))
 
 
+# def get_btc_regime():
+#     """BTC 導航：判斷整體市場多空環境"""
+#     try:
+#         ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=60)
+#         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+#         curr_p = df['c'].iloc[-1]
+#         sma20 = df['c'].rolling(20).mean().iloc[-1]
+#         sma50 = df['c'].rolling(50).mean().iloc[-1]
+#
+#         dev_threshold = config['STRATEGY']['btc_dev_threshold']
+#         target_long = sma20 * (1 + dev_threshold)
+#
+#         cond_price = curr_p > target_long
+#         cond_trend = sma20 > sma50
+#
+#         tick_p = "✅" if cond_price else "❌"
+#         tick_t = "✅" if cond_trend else "❌"
+#
+#         if cond_price and cond_trend:
+#             status, signal = "🟢 GREEN   (Bullish - All in)", 1
+#         elif cond_price or cond_trend:
+#             status, signal = "🟡 YELLOW  (Conditions unmet - Standby)", 0
+#         else:
+#             status, signal = "🔴 RED     (Bearish - Do not enter)", -1
+#
+#         report_data = {
+#             'btc_price': round(curr_p, 2),
+#             'target_price': round(target_long, 2),
+#             'sma20': round(sma20, 2),
+#             'sma50': round(sma50, 2),
+#             'signal_code': signal,
+#             'decision_text': status
+#         }
+#         log_status_to_csv(report_data)
+#
+#         print("-" * 60)
+#         print(f"📈 BTC Live Status (Long) | Price: {curr_p:.0f}")
+#         print(f"1️⃣ Price Threshold: Current({curr_p:.0f}) > Target({target_long:.0f}) {tick_p}")
+#         print(f"2️⃣ Trend Confirmation: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
+#         print(f"🚦 Final Decision: {status}")
+#         print("-" * 60)
+#
+#         return signal
+#     except Exception as e:
+#         print(f"⚠️ Navigation Fault: {e}")
+#         return 0
+
+
 def get_btc_regime():
-    """BTC 導航：判斷整體市場多空環境"""
+    """🚀 終極導航 (做多版)：HMA 交叉 + ADX 趨勢過濾 + 均量過濾"""
     try:
-        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=60)
+        # ⚠️ 必須拉長到 150，確保 HMA50 和 ADX 有足夠數據計算
+        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=150)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         curr_p = df['c'].iloc[-1]
-        sma20 = df['c'].rolling(20).mean().iloc[-1]
-        sma50 = df['c'].rolling(50).mean().iloc[-1]
+        curr_v = df['v'].iloc[-1]
 
-        dev_threshold = config['STRATEGY']['btc_dev_threshold']
-        target_long = sma20 * (1 + dev_threshold)
+        # ==========================================
+        # 1️⃣ 極速趨勢引擎：計算 HMA 20 與 HMA 50
+        # ==========================================
+        def calc_hma(s, period):
+            half_length = int(period / 2)
+            sqrt_length = int(np.sqrt(period))
+            # WMA (加權移動平均) 輔助函數
+            weights_half = np.arange(1, half_length + 1)
+            weights_full = np.arange(1, period + 1)
+            weights_sqrt = np.arange(1, sqrt_length + 1)
 
-        cond_price = curr_p > target_long
-        cond_trend = sma20 > sma50
+            wma_half = s.rolling(half_length).apply(lambda x: np.dot(x, weights_half) / weights_half.sum(), raw=True)
+            wma_full = s.rolling(period).apply(lambda x: np.dot(x, weights_full) / weights_full.sum(), raw=True)
 
-        tick_p = "✅" if cond_price else "❌"
+            s_diff = (2 * wma_half) - wma_full
+            hma = s_diff.rolling(sqrt_length).apply(lambda x: np.dot(x, weights_sqrt) / weights_sqrt.sum(), raw=True)
+            return hma
+
+        df['hma20'] = calc_hma(df['c'], 20)
+        df['hma50'] = calc_hma(df['c'], 50)
+
+        # 🚀 修改：條件 1：HMA20 升穿 HMA50 (無滯後升勢確立)
+        hma20_val = df['hma20'].iloc[-1]
+        hma50_val = df['hma50'].iloc[-1]
+        cond_trend = hma20_val > hma50_val  # <--- LONG 關鍵：20 大過 50
+
+        # ==========================================
+        # 2️⃣ 趨勢強度濾網：計算 ADX (14)
+        # ==========================================
+        df['up'] = df['h'] - df['h'].shift(1)
+        df['down'] = df['l'].shift(1) - df['l']
+        df['+dm'] = np.where((df['up'] > df['down']) & (df['up'] > 0), df['up'], 0)
+        df['-dm'] = np.where((df['down'] > df['up']) & (df['down'] > 0), df['down'], 0)
+        df['tr'] = np.maximum(df['h'] - df['l'],
+                              np.maximum(abs(df['h'] - df['c'].shift(1)), abs(df['l'] - df['c'].shift(1))))
+
+        atr_14 = df['tr'].ewm(alpha=1 / 14, adjust=False).mean()
+        plus_di = 100 * (pd.Series(df['+dm']).ewm(alpha=1 / 14, adjust=False).mean() / atr_14)
+        minus_di = 100 * (pd.Series(df['-dm']).ewm(alpha=1 / 14, adjust=False).mean() / atr_14)
+
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        adx_val = dx.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
+
+        # 條件 2：ADX > 22 (過濾無方向橫盤，多空通用)
+        cond_adx = adx_val > 22
+
+        # ==========================================
+        # 3️⃣ 成交量濾網 (抗極端值優化版)：24H 中位數 (Median)
+        # ==========================================
+        # 改用 24 小時中位數，完美無視單一巨量插針的干擾
+        median_v_24 = df['v'].rolling(24).median().iloc[-1]
+
+        # 動能容錯：只需要大於中位數的 80% (0.8)，就視為有足夠健康動能
+        target_vol = median_v_24 * 0.8
+        cond_vol = curr_v > target_vol
+
+        # ==========================================
+        # 4️⃣ 整合訊號與輸出
+        # ==========================================
         tick_t = "✅" if cond_trend else "❌"
+        tick_a = f"✅ (ADX: {adx_val:.1f})" if cond_adx else f"❌ (ADX: {adx_val:.1f})"
+        tick_v = f"✅ (Vol: {curr_v:.0f} > 目標:{target_vol:.0f})" \
+            if cond_vol else f"❌ (Vol: {curr_v:.0f} < 目標:{target_vol:.0f})"
 
-        if cond_price and cond_trend:
-            status, signal = "🟢 GREEN   (Bullish - All in)", 1
-        elif cond_price or cond_trend:
-            status, signal = "🟡 YELLOW  (Conditions unmet - Standby)", 0
+        # 必須三個條件同時滿足才開綠燈
+        if cond_trend and cond_adx and cond_vol:
+            status, signal = "🟢 GREEN   (Bullish Trend, ADX & Vol Validated)", 1
+        elif cond_trend or cond_adx:
+            status, signal = "🟡 YELLOW  (Standby - Waiting for confluence)", 0
         else:
-            status, signal = "🔴 RED     (Bearish - Do not enter)", -1
+            status, signal = "🔴 RED     (Sideways / Bearish)", -1  # <--- 沒趨勢或是跌勢就停火
 
-        report_data = {
+        # 兼容 CSV 紀錄 (借用欄位名)
+        report = {
             'btc_price': round(curr_p, 2),
-            'target_price': round(target_long, 2),
-            'sma20': round(sma20, 2),
-            'sma50': round(sma50, 2),
+            'target_price': round(hma50_val, 2),
+            'sma20': round(hma20_val, 2),
+            'adx': round(adx_val, 2),
             'signal_code': signal,
             'decision_text': status
         }
-        log_status_to_csv(report_data)
+        log_status_to_csv(report)
 
         print("-" * 60)
-        print(f"📈 BTC Live Status (Long) | Price: {curr_p:.0f}")
-        print(f"1️⃣ Price Threshold: Current({curr_p:.0f}) > Target({target_long:.0f}) {tick_p}")
-        print(f"2️⃣ Trend Confirmation: SMA20({sma20:.0f}) > SMA50({sma50:.0f}) {tick_t}")
-        print(f"🚦 Final Decision: {status}")
+        print(f"📊 BTC 實時戰報 (Long 多頭 HMA+ADX版) | 現價: {curr_p:.0f}")
+        print(f"1️⃣ 極速升勢: HMA20({hma20_val:.0f}) > HMA50({hma50_val:.0f}) {tick_t}")  # <--- 改為大於
+        print(f"2️⃣ 趨勢強度: ADX > 22 {tick_a}")
+        print(f"3️⃣ 動能確認: 當前成交量 > 20H均量 {tick_v}")
+        print(f"🚦 最終決策: {status}")
         print("-" * 60)
 
         return signal
     except Exception as e:
-        print(f"⚠️ Navigation Fault: {e}")
+        print(f"⚠️ 導航故障: {e}")
         return 0
 
 
