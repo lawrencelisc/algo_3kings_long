@@ -10,7 +10,10 @@ logger = logging.getLogger('AlgoTrade_V6_Main')
 
 
 def main():
-    print(f"🚀 AI AlgoTrade V6.0 Modular Final (Event-Driven) Started...")
+    # ❌ 舊代碼保留
+    # print(f"🚀 AI AlgoTrade V6.0 Modular Final (Event-Driven) Started...")
+    # 🚀 修正/新增
+    print(f"🚀 AI AlgoTrade V6.1 Modular LONG (Event-Driven + Profit Retrace Fix) Started...")
     print(f"Lee-Ready Money Flow + Order Book Imbalance + P95 Filter # Initializing...")
     last_scout_time = 0
     t_cfg = config['TRADING']
@@ -51,7 +54,10 @@ def main():
                 print("⚡ Critical Zone Detected: Accelerating patrol frequency to 2 seconds!")
                 time.sleep(2)
             else:
-                time.sleep(t_cfg['pos_check_interval'])
+                # ❌ 舊代碼保留
+                # time.sleep(t_cfg['pos_check_interval'])
+                # 🚀 修正：強制縮短一般監控間隔為 4 秒 (覆蓋 config 設定，提高靈敏度)
+                time.sleep(4)
 
         # ✅ 修正：KeyboardInterrupt 必須放在 Exception 前面
         except KeyboardInterrupt:

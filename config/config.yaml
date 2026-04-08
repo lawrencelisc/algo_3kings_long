@@ -17,7 +17,14 @@ TRADING:
   risk_per_trade: 0.01        # 每筆交易風險比例 (1%)
   min_notional: 5.0           # Bybit 最小名義價值 (防止 Order too small)
   scouting_interval: 130      # 海選掃描頻率 (秒)  由 120 恢復 130 （ver. 2026-04-07)
-  pos_check_interval: 14      # 持倉巡邏與 Trail SL 更新頻率 (秒) 由 10 恢復 14（ver. 2026-04-07)
+  # ❌ 舊代碼保留
+  # pos_check_interval: 14      # 持倉巡邏與 Trail SL 更新頻率 (秒) 由 10 恢復 14（ver. 2026-04-07)
+  # 🚀 修正：縮短監控間隔為 4 秒，提高靈敏度
+  pos_check_interval: 4
+
+  # 🚀 新增：強制鎖利參數 (Profit Lock) 放入 TRADING 設定中
+  profit_lock_threshold: 0.015  # 啟動門檻：當利潤達到 1.5% 時啟動回撤保護
+  profit_retrace_limit: 0.4     # 容忍回撤：如果利潤從最高點回落 40%，立即觸發平倉
 
 # ==========================================
 # [STAGE 2] 策略核心參數 (STRATEGY) - 妖幣特化版
