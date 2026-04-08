@@ -16,7 +16,7 @@ exchange = ccxt.bybit({
     'secret': config['ACCOUNTS']['main_account']['secret'],
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'},
-    'hostname': 'bytick.com',
+    # 'hostname': 'bytick.com',  <--- ❌ 將這行刪除或加上 # 註解
 })
 exchange.load_markets()
 
