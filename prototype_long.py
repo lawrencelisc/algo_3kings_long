@@ -285,14 +285,14 @@ def scouting_top_coins(n=10):
                 if ask and bid and bid > 0:
                     spread = (ask - bid) / bid
                     # 🚀 妖幣特化 1：放寬 Spread 門檻到 0.0030 (0.3%)，容許流動性稍差嘅潛力妖幣入選
-                    if spread < 0.0030:
+                    if spread < 0.0050:
                         data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']})
 
         df = pd.DataFrame(data)
         if df.empty: return []
 
         # 🚀 妖幣特化 2：廢除 quantile(0.8) 大幣資金池，改用絕對硬門檻 (24小時成交量 > 1,000萬 U)
-        MIN_VOLUME_ALT = 10000000
+        MIN_VOLUME_ALT = 3000000
         df_filtered = df[df['volume'] >= MIN_VOLUME_ALT]
 
         # 尋找升幅最勁嘅前 n 隻妖幣
