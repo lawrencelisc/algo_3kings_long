@@ -291,14 +291,11 @@ def scouting_top_coins(n=10):
         df = pd.DataFrame(data)
         if df.empty: return []
 
-        # 🚀 妖幣特化 2：廢除 quantile(0.8) 大幣資金池，改用絕對硬門檻 (24小時成交量 > 1,000萬 U)
-        MIN_VOLUME_ALT = 3000000
-        df_filtered = df[df['volume'] >= MIN_VOLUME_ALT]
-
-        # 尋找升幅最勁嘅前 n 隻妖幣
-        return df_filtered.sort_values('change', ascending=False).head(n)['symbol'].tolist()
+        # 🚀 修正：做多要搵升得最勁嘅 (ascending=False)
+        return \
+            df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)['symbol'].tolist()
     except Exception as e:
-        print(f"⚠️ Altcoin Scouting Error: {e}")
+        print(f"⚠️ Scouting Error: {e}")
         return []
 
 
