@@ -272,7 +272,7 @@ def get_btc_regime():
         return 0
 
 
-def scouting_top_coins(n=5):
+def scouting_top_coins(n=10):
     """海選強勢幣 (過濾 Spread)"""
     try:
         tickers = exchange.fetch_tickers()
@@ -610,7 +610,7 @@ def main():
 
                 if regime == 1:
                     print("🟢 綠燈確認：執行多單大幣海選掃描...")
-                    target_coins = scouting_strong_coins(20)
+                    target_coins = scouting_top_coins(12)
 
                     for s in target_coins:
                         try:
