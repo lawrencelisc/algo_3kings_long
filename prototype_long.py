@@ -272,8 +272,8 @@ def get_btc_regime():
         return 0
 
 
-def scouting_top_coins(n=10):
-    """海選強勢幣 (過濾 Spread)"""
+def scouting_top_coins(n=12):
+    """妖幣海選 (放寬 Spread，絕對成交量過濾)"""
     try:
         tickers = exchange.fetch_tickers()
         data = []
@@ -283,16 +283,24 @@ def scouting_top_coins(n=10):
                 bid = t.get('bid')
                 if ask and bid and bid > 0:
                     spread = (ask - bid) / bid
-                    if spread < 0.0015:
+                    # 🚀 妖幣特化 1：放寬 Spread 門檻到 0.0030 (0.3%)
+                    if spread < 0.0030:
                         data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']})
 
         df = pd.DataFrame(data)
         if df.empty: return []
 
-        # 🚀 修正：做多要搵升得最勁嘅 (ascending=False)
-        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)['symbol'].tolist()
+        # 🚀 妖幣特化 2：絕對硬門檻 (24小時成交量 > 1,000萬 U)，過濾死水幣
+        MIN_VOLUME_ALT = 10000000
+        df_filtered = df[df['volume'] >= MIN_VOLUME_ALT].copy()  # 加上 .copy() 避免 pandas 警告
+
+        # 二次防護：如果篩選後冇幣符合條件，直接 return 空 list
+        if df_filtered.empty: return []
+
+        # 🚀 尋找升幅最勁嘅前 n 隻妖幣 (只做多 Long 的話用呢行)
+        return df_filtered.sort_values('change', ascending=False).head(n)['symbol'].tolist()
     except Exception as e:
-        print(f"⚠️ Scouting Error: {e}")
+        logger.error(f"⚠️ Altcoin Scouting Error: {e}")
         return []
 
 
