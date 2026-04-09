@@ -272,7 +272,8 @@ def get_btc_regime():
         return 0
 
 
-def scouting_top_coins(n=10):
+def scouting_top_coins(n=5):
+    """海選強勢幣 (過濾 Spread)"""
     try:
         tickers = exchange.fetch_tickers()
         data = []
@@ -286,9 +287,12 @@ def scouting_top_coins(n=10):
                         data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']})
 
         df = pd.DataFrame(data)
-        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)[
-            'symbol'].tolist()
-    except:
+        if df.empty: return []
+
+        # 🚀 修正：做多要搵升得最勁嘅 (ascending=False)
+        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)['symbol'].tolist()
+    except Exception as e:
+        print(f"⚠️ Scouting Error: {e}")
         return []
 
 
