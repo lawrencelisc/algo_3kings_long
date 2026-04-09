@@ -272,9 +272,7 @@ def get_btc_regime():
         return 0
 
 
-# 🚀 新增：妖幣/山寨幣專用海選邏輯 (ver 2026-04-06)
 def scouting_top_coins(n=10):
-    """海選強勢幣 (過濾 Spread)"""
     try:
         tickers = exchange.fetch_tickers()
         data = []
@@ -288,13 +286,11 @@ def scouting_top_coins(n=10):
                         data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']})
 
         df = pd.DataFrame(data)
-        if df.empty: return []
-
-        # 🚀 修正：做多要搵升得最勁嘅 (ascending=False)
-        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)['symbol'].tolist()
-    except Exception as e:
-        print(f"⚠️ Scouting Error: {e}")
+        return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)[
+            'symbol'].tolist()
+    except:
         return []
+
 
 def apply_lee_ready_long_logic(symbol):
     """正向 Lee-Ready 狙擊模式 (含大單加權、加速度與防砸盤陷阱)"""
