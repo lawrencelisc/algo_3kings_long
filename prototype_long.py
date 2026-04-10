@@ -54,7 +54,7 @@ MAX_NOTIONAL_PER_TRADE = 100.0
 # --- 大幣專用設定 (專打流動性霸主) ---
 NET_FLOW_SIGMA = 2.0                    ## 資金流偏離度觸發門檻
 TP_ATR_MULT = 5.0                       ## 🚀 放闊止盈 (由 4.0 改為 5.0)，將利潤空間天花板打開
-SL_ATR_MULT = 1.0                       ## 🚀 收緊止損 (由 2.0 縮至 1.0)，見勢色唔對極速跳車！
+SL_ATR_MULT = 0.8                       ## 🚀 收緊止損 (由 2.0 縮至 0.8)，見勢色唔對極速跳車！
 # TRAIL_ATR_MULT = 1.0                  ## 追蹤止損 ATR 步進倍數 改用動態 ATR
 MIN_IMBALANCE_RATIO = 0.2               ## 訂單簿失衡度門檻
 
