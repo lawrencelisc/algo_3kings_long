@@ -634,7 +634,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p, 'sl_price': sl_p,
             'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0
         }
-        cooldown_tracker[symbol] = time.time() + 3600  # 1 小時冷卻
+        cooldown_tracker[symbol] = time.time() + 480  # 🚀 配合 0.8 ATR 窄止損，放寬至 8 分鐘 (480秒) 冷卻
 
         log_to_csv({
             'symbol': symbol, 'action': 'LONG_ENTRY', 'price': actual_price, 'amount': actual_amount,
