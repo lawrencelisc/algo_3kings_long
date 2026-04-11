@@ -47,6 +47,7 @@ WORKING_CAPITAL = 1000.0                ## 運作本金上限
 MAX_LEVERAGE = 10.0                     ## 最大槓桿倍數
 RISK_PER_TRADE = 0.01                   ## 每筆交易風險比例 (1%)
 MIN_NOTIONAL = 5.0                      ## 交易所最小名義價值要求
+SCOUTING_COINS = 12                     # 監察幣數量
 
 # 🛡️ 防護網 1：單筆名義價值硬上限
 MAX_NOTIONAL_PER_TRADE = 100.0
@@ -169,6 +170,7 @@ def get_3_layer_avg_price(symbol, side='bids'):
     try:
         ob = exchange.fetch_order_book(symbol, limit=5)
         levels = ob[side][:3]
+        if not levels: return None
         return sum([level[0] for level in levels]) / len(levels)
     except:
         return None
@@ -270,13 +272,19 @@ def get_btc_regime():
         print(f"🚦 最終決策: {status}")
         print("-" * 60)
 
-        return signal
+        # 🚀 升級改動：回傳詳細動能字典
+        return {
+            'signal': signal,
+            'adx': float(adx_val),
+            'di_spread': float(plus_di.iloc[-1]) - float(minus_di.iloc[-1])
+        }
+
     except Exception as e:
         print(f"⚠️ 導航故障: {e}")
-        return 0
+        return {'signal': 0, 'adx': 0.0, 'di_spread': 0.0}
 
 
-def scouting_top_coins(n=12):
+def scouting_strong_coins(scouting_coins=12):
     """妖幣海選 (放寬 Spread，絕對成交量過濾)"""
     try:
         tickers = exchange.fetch_tickers()
@@ -302,7 +310,7 @@ def scouting_top_coins(n=12):
         if df_filtered.empty: return []
 
         # 🚀 尋找升幅最勁嘅前 n 隻妖幣 (只做多 Long 的話用呢行)
-        return df_filtered.sort_values('change', ascending=False).head(n)['symbol'].tolist()
+        return df_filtered.sort_values('change', ascending=False).head(scouting_coins)['symbol'].tolist()
     except Exception as e:
         logger.error(f"⚠️ Altcoin Scouting Error: {e}")
         return []
@@ -372,12 +380,26 @@ def apply_lee_ready_long_logic(symbol):
             imbalance = 0
 
         is_strong = False
+        std_val = df['net_flow'].std()
+
         if df['net_flow'].std() > 0:
             z_score = short_window_flow / (df['net_flow'].std() * np.sqrt(50))
         else:
             z_score = 0
 
-        if (short_window_flow > 0) and (acceleration > 0) and (imbalance > 0.15):
+        # 🚀 升級改動：計算資金流新鮮度
+        flow_50 = df['net_flow'].tail(50)
+        flow_25_recent = flow_50.tail(25).sum()
+        flow_25_older = flow_50.head(25).sum()
+
+        z_recent = (flow_25_recent / (std_val * np.sqrt(25))) if std_val > 0 else 0
+        z_older = (flow_25_older / (std_val * np.sqrt(25))) if std_val > 0 else 0
+
+        # 新鮮度要求：近端必須大於等於遠端的 80%
+        flow_is_fresh = z_recent >= (max(0, z_older) * 0.8)
+
+        # 🐛 Fix B3: 原本硬碼 0.15，但全局參數 MIN_IMBALANCE_RATIO=0.2，改用常數保持一致
+        if (short_window_flow > 0) and (acceleration > 0) and (imbalance > MIN_IMBALANCE_RATIO):
             is_strong = True
             print(f"🔥 {symbol} Long Sniper! Accel: {acceleration:.0f} | Imbalance: {imbalance:.2f}")
         elif z_score > NET_FLOW_SIGMA:
@@ -389,10 +411,11 @@ def apply_lee_ready_long_logic(symbol):
             is_strong = False
             print(f"⚠️ {symbol} 發現莊家砸盤陷阱！賣盤極厚，取消做多！")
 
-        return short_window_flow, df['price'].iloc[-1], is_strong
+        # 🚀 升級改動：回傳 6 個變數
+        return short_window_flow, df['price'].iloc[-1], is_strong, flow_is_fresh, acceleration, z_score
     except Exception as e:
         print(f"⚠️ LR Logic Error [{symbol}]: {e}")
-        return 0, 0, False
+        return 0, 0, False, False, 0, 0
 
 
 # ==========================================
@@ -509,9 +532,9 @@ def manage_long_positions():
             exit_reason = None
             time_held = time.time() - pos.get('entry_time', time.time())
 
-            # 🚀 第 1 重防護：聰明時間止損 (持倉 > 5分鐘，利潤 < 0.5%)
-            # 數據顯示妖幣需要蘊釀時間，將 180 秒放寬至 300 秒，俾足夠耐性等佢點火
-            if not exit_reason and time_held > 300 and pnl_pct < 0.005:
+            # 🚀 第 1 重防護：聰明時間止損 (持倉 > 5 分鐘仍在虧損)
+            # 🐛 Fix A2: 原條件 pnl_pct < 0.005 會踢走小賺 (+0.3%) 的倉位，改為 < 0 只踢虧損
+            if not exit_reason and time_held > 300 and pnl_pct < 0:
                 exit_reason = "Time Stop (Failed to ignite)"
 
             # 🚀 第 2 重防護：資金流反轉檢測 (只在未保本且處於虧損時檢查，節省 API)
@@ -529,14 +552,15 @@ def manage_long_positions():
             # 執行本地主動平倉 (IOC)
             if exit_reason:
                 print(f"⚔️ 觸發 {exit_reason}，執行 IOC 平單: {s} | Max PnL: {pos['max_pnl_pct'] * 100:.2f}%")
+                ioc_price = get_3_layer_avg_price(s, 'bids') or curr_p
                 try:
-                    ioc_price = get_3_layer_avg_price(s, 'bids') or curr_p
                     exchange.create_order(s, 'limit', 'sell', pos['amount'], ioc_price,
                                           {'timeInForce': 'IOC', 'reduceOnly': True})
                 except:
                     exchange.create_market_sell_order(s, pos['amount'], {'reduceOnly': True})
 
-                ioc_pnl = round((curr_p - pos['entry_price']) * pos['amount'], 4)
+                # 🐛 Fix A3: 原本用 curr_p（報價）計算 PnL，改用 ioc_price（掛單成交估算），日誌更準確
+                ioc_pnl = round((ioc_price - pos['entry_price']) * pos['amount'], 4)
 
                 log_to_csv({'symbol': s, 'action': 'LONG_EXIT', 'price': curr_p, 'amount': pos['amount'],
                             'reason': exit_reason, 'realized_pnl': ioc_pnl})
@@ -552,13 +576,25 @@ def manage_long_positions():
         if "10006" in str(e): time.sleep(5)
 
 
-def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
+# 🚀 升級改動：接收 flow_is_fresh 同 regime_info
+def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile, flow_is_fresh, regime_info):
     """計算倉位並執行多單入場"""
     if symbol in cooldown_tracker:
         if time.time() < cooldown_tracker[symbol]:
             return
         else:
             del cooldown_tracker[symbol]
+
+    # 🚀 攔截器 1：ADX 動能過濾
+    adx_strong = regime_info['adx'] >= 28 and regime_info['di_spread'] >= 12
+    if not adx_strong:
+        print(f"⏸️ {symbol} 跳過：BTC ADX={regime_info['adx']:.1f}, +DI-(-DI)={regime_info['di_spread']:.1f}，大市動能不足")
+        return
+
+    # 🚀 攔截器 2：新鮮度過濾
+    if not flow_is_fresh:
+        print(f"⏸️ {symbol} 跳過：Net Flow 近端動能已衰退，避免追尾段入場")
+        return
 
     if not (is_strong and is_volatile and symbol not in positions): return
 
@@ -632,11 +668,12 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
             logger.warning(f"⚠️ {symbol} 止盈止損設置異常 (不影響本地追蹤): {e}")
 
         # 寫入本地記憶體
+        # 🐛 Fix A1: 補回 entry_time，否則 time_held 永遠為 0，Time Stop 永遠不觸發
         positions[symbol] = {
             'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p, 'sl_price': sl_p,
-            'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0
+            'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0, 'entry_time': time.time()
         }
-        cooldown_tracker[symbol] = time.time() + 480  # 🚀 配合 0.8 ATR 窄止損，放寬至 8 分鐘 (480秒) 冷卻
+        cooldown_tracker[symbol] = time.time() + 480  # 配合 1.2 ATR 止損，冷卻 8 分鐘 (480秒)
 
         log_to_csv({
             'symbol': symbol, 'action': 'LONG_ENTRY', 'price': actual_price, 'amount': actual_amount,
@@ -654,8 +691,8 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
 # 🚀 [主程序] 主迴圈與事件驅動
 # ==========================================
 def main():
-    print(f"🚀 AI 實戰 V6.0 FINAL BIG LONG (重裝甲大幣防護版) 啟動...")
-    print(f"Lee-Ready 資金流 + 訂單簿失衡度 + 大幣動態海選 [終極做多版] 初始化中...")
+    print(f"🚀 AI 實戰 V6.0 ALTCOIN LONG (妖幣狙擊版) 啟動...")
+    print(f"Lee-Ready 資金流 + 訂單簿失衡度 + 妖幣動態海選 [終極做多版] 初始化中...")
 
     # 啟動時先同步遺留的倉位
     sync_positions_on_startup()
@@ -670,23 +707,28 @@ def main():
 
             # 2. 定期偵測與進攻
             if curr_t - last_scout_time > SCOUTING_INTERVAL:
-                regime = get_btc_regime()
+                # 🚀 接收 Dictionary
+                regime_info = get_btc_regime()
 
-                if regime == 1:
+                # 🚀 判斷 signal
+                if regime_info['signal'] == 1:
                     print("🟢 綠燈確認：執行多單大幣海選掃描...")
-                    target_coins = scouting_top_coins(12)
+                    target_coins = scouting_strong_coins(SCOUTING_COINS)
 
                     for s in target_coins:
                         try:
-                            flow, last_p, is_strong = apply_lee_ready_long_logic(s)
+                            # 🚀 接收 6 個回傳值
+                            flow, last_p, is_strong, flow_is_fresh, acc, z = apply_lee_ready_long_logic(s)
                             atr, is_v = get_market_metrics(s)
                             if last_p > 0:
-                                execute_live_long(s, flow, last_p, is_strong, atr, is_v)
+                                # 🚀 傳入新參數
+                                execute_live_long(s, flow, last_p, is_strong, atr, is_v, flow_is_fresh, regime_info)
                         except Exception as e:
                             continue
                         time.sleep(0.5)
                 else:
-                    print(f"🚦 目前導航狀態為 {regime}，海選暫停。")
+                    # ✅ 修正：使用 regime_info['signal'] 讀取狀態
+                    print(f"🚦 目前大盤狀態為 Signal: {regime_info['signal']}，海選暫停。")
                     target_coins = []  # 黃/紅燈時清空孤兒名單
 
                 last_scout_time = curr_t

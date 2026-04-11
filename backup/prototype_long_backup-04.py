@@ -47,6 +47,7 @@ WORKING_CAPITAL = 1000.0                ## 運作本金上限
 MAX_LEVERAGE = 10.0                     ## 最大槓桿倍數
 RISK_PER_TRADE = 0.01                   ## 每筆交易風險比例 (1%)
 MIN_NOTIONAL = 5.0                      ## 交易所最小名義價值要求
+SCOUTING_COINS = 12                     # 監察幣數量
 
 # 🛡️ 防護網 1：單筆名義價值硬上限
 MAX_NOTIONAL_PER_TRADE = 100.0
@@ -54,7 +55,7 @@ MAX_NOTIONAL_PER_TRADE = 100.0
 # --- 大幣專用設定 (專打流動性霸主) ---
 NET_FLOW_SIGMA = 2.0                    ## 資金流偏離度觸發門檻
 TP_ATR_MULT = 5.0                       ## 🚀 放闊止盈 (由 4.0 改為 5.0)，將利潤空間天花板打開
-SL_ATR_MULT = 1.5                       ## 🚀 放鬆止損 (由 0.8 改為 1.5)，見勢色唔對極速跳車！
+SL_ATR_MULT = 1.2                       ## 🚀 放鬆止損 (由 0.8 改為 1.2)，見勢色唔對極速跳車！
 # TRAIL_ATR_MULT = 1.0                  ## 追蹤止損 ATR 步進倍數 改用動態 ATR
 MIN_IMBALANCE_RATIO = 0.2               ## 訂單簿失衡度門檻
 
@@ -169,6 +170,7 @@ def get_3_layer_avg_price(symbol, side='bids'):
     try:
         ob = exchange.fetch_order_book(symbol, limit=5)
         levels = ob[side][:3]
+        if not levels: return None
         return sum([level[0] for level in levels]) / len(levels)
     except:
         return None
@@ -270,13 +272,19 @@ def get_btc_regime():
         print(f"🚦 最終決策: {status}")
         print("-" * 60)
 
-        return signal
+        # 🚀 升級改動：回傳詳細動能字典
+        return {
+            'signal': signal,
+            'adx': float(adx_val),
+            'di_spread': float(plus_di.iloc[-1]) - float(minus_di.iloc[-1])
+        }
+
     except Exception as e:
         print(f"⚠️ 導航故障: {e}")
-        return 0
+        return {'signal': 0, 'adx': 0.0, 'di_spread': 0.0}
 
 
-def scouting_top_coins(n=12):
+def scouting_strong_coins(scouting_coins=12):
     """妖幣海選 (放寬 Spread，絕對成交量過濾)"""
     try:
         tickers = exchange.fetch_tickers()
@@ -302,7 +310,7 @@ def scouting_top_coins(n=12):
         if df_filtered.empty: return []
 
         # 🚀 尋找升幅最勁嘅前 n 隻妖幣 (只做多 Long 的話用呢行)
-        return df_filtered.sort_values('change', ascending=False).head(n)['symbol'].tolist()
+        return df_filtered.sort_values('change', ascending=False).head(scouting_coins)['symbol'].tolist()
     except Exception as e:
         logger.error(f"⚠️ Altcoin Scouting Error: {e}")
         return []
@@ -372,10 +380,23 @@ def apply_lee_ready_long_logic(symbol):
             imbalance = 0
 
         is_strong = False
+        std_val = df['net_flow'].std()
+
         if df['net_flow'].std() > 0:
             z_score = short_window_flow / (df['net_flow'].std() * np.sqrt(50))
         else:
             z_score = 0
+
+        # 🚀 升級改動：計算資金流新鮮度
+        flow_50 = df['net_flow'].tail(50)
+        flow_25_recent = flow_50.tail(25).sum()
+        flow_25_older = flow_50.head(25).sum()
+
+        z_recent = (flow_25_recent / (std_val * np.sqrt(25))) if std_val > 0 else 0
+        z_older = (flow_25_older / (std_val * np.sqrt(25))) if std_val > 0 else 0
+
+        # 新鮮度要求：近端必須大於等於遠端的 80%
+        flow_is_fresh = z_recent >= (max(0, z_older) * 0.8)
 
         if (short_window_flow > 0) and (acceleration > 0) and (imbalance > 0.15):
             is_strong = True
@@ -389,10 +410,11 @@ def apply_lee_ready_long_logic(symbol):
             is_strong = False
             print(f"⚠️ {symbol} 發現莊家砸盤陷阱！賣盤極厚，取消做多！")
 
-        return short_window_flow, df['price'].iloc[-1], is_strong
+        # 🚀 升級改動：回傳 6 個變數
+        return short_window_flow, df['price'].iloc[-1], is_strong, flow_is_fresh, acceleration, z_score
     except Exception as e:
         print(f"⚠️ LR Logic Error [{symbol}]: {e}")
-        return 0, 0, False
+        return 0, 0, False, False, 0, 0
 
 
 # ==========================================
@@ -552,13 +574,25 @@ def manage_long_positions():
         if "10006" in str(e): time.sleep(5)
 
 
-def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile):
+# 🚀 升級改動：接收 flow_is_fresh 同 regime_info
+def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volatile, flow_is_fresh, regime_info):
     """計算倉位並執行多單入場"""
     if symbol in cooldown_tracker:
         if time.time() < cooldown_tracker[symbol]:
             return
         else:
             del cooldown_tracker[symbol]
+
+    # 🚀 攔截器 1：ADX 動能過濾
+    adx_strong = regime_info['adx'] >= 28 and regime_info['di_spread'] >= 12
+    if not adx_strong:
+        print(f"⏸️ {symbol} 跳過：BTC ADX={regime_info['adx']:.1f}, +DI-(-DI)={regime_info['di_spread']:.1f}，大市動能不足")
+        return
+
+    # 🚀 攔截器 2：新鮮度過濾
+    if not flow_is_fresh:
+        print(f"⏸️ {symbol} 跳過：Net Flow 近端動能已衰退，避免追尾段入場")
+        return
 
     if not (is_strong and is_volatile and symbol not in positions): return
 
@@ -670,23 +704,28 @@ def main():
 
             # 2. 定期偵測與進攻
             if curr_t - last_scout_time > SCOUTING_INTERVAL:
-                regime = get_btc_regime()
+                # 🚀 接收 Dictionary
+                regime_info = get_btc_regime()
 
-                if regime == 1:
+                # 🚀 判斷 signal
+                if regime_info['signal'] == 1:
                     print("🟢 綠燈確認：執行多單大幣海選掃描...")
-                    target_coins = scouting_top_coins(12)
+                    target_coins = scouting_strong_coins(SCOUTING_COINS)
 
                     for s in target_coins:
                         try:
-                            flow, last_p, is_strong = apply_lee_ready_long_logic(s)
+                            # 🚀 接收 6 個回傳值
+                            flow, last_p, is_strong, flow_is_fresh, acc, z = apply_lee_ready_long_logic(s)
                             atr, is_v = get_market_metrics(s)
                             if last_p > 0:
-                                execute_live_long(s, flow, last_p, is_strong, atr, is_v)
+                                # 🚀 傳入新參數
+                                execute_live_long(s, flow, last_p, is_strong, atr, is_v, flow_is_fresh, regime_info)
                         except Exception as e:
                             continue
                         time.sleep(0.5)
                 else:
-                    print(f"🚦 目前導航狀態為 {regime}，海選暫停。")
+                    # ✅ 修正：使用 regime_info['signal'] 讀取狀態
+                    print(f"🚦 目前大盤狀態為 Signal: {regime_info['signal']}，海選暫停。")
                     target_coins = []  # 黃/紅燈時清空孤兒名單
 
                 last_scout_time = curr_t
