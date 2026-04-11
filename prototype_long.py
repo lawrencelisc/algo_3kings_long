@@ -598,7 +598,7 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
     atr_pct = atr / current_price
 
     # 🛠️ V6.1 攔截器 1：妖幣版 ADX 動能過濾（沿用 BTC regime 確認）
-    adx_strong = regime_info['adx'] >= 28 and regime_info['di_spread'] >= 12
+    adx_strong = regime_info['adx'] >= 25 and regime_info['di_spread'] >= 15
     if not adx_strong:
         print(f"⏸️ {symbol} 跳過：BTC ADX={regime_info['adx']:.1f}, +DI-(-DI)={regime_info['di_spread']:.1f}，大市動能不足")
         return
