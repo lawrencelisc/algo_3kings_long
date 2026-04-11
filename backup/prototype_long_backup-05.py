@@ -27,7 +27,7 @@ exchange.load_markets()
 
 # 檔案與路徑設定
 LOG_DIR = "result"
-STATUS_DIR = "status"
+STATUS_DIR = "../status"
 
 LOG_FILE = f"{LOG_DIR}/live_long_log.csv"
 STATUS_FILE = f"{STATUS_DIR}/btc_regime_long.csv"
