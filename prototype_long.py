@@ -55,7 +55,7 @@ MAX_NOTIONAL_PER_TRADE = 100.0
 # --- 妖幣專用設定 ---
 NET_FLOW_SIGMA = 2.0                    ## 資金流偏離度觸發門檻
 TP_ATR_MULT = 5.0                       ## 止盈 ATR 倍數
-SL_ATR_MULT = 1.2                       ## 止損 ATR 倍數
+SL_ATR_MULT = 0.8                       ## 止損 ATR 倍數
 MIN_IMBALANCE_RATIO = 0.2               ## 訂單簿失衡度門檻
 
 # --- 🛠️ V6.1 新增：妖幣專屬入場過濾參數（由 2026-04-10 數據校準）---
@@ -467,18 +467,48 @@ def sync_positions_on_startup():
 
 
 def manage_long_positions():
-    """管理在途多單 (Native Exit 檢查、Trail SL 更新、回撤鎖利)"""
+    """管理在途多單 (Native Exit 檢查、Trail SL 更新、回撤鎖利、動態孤兒接管)"""
     try:
-        live_positions_raw = exchange.fetch_positions()
+        # 🛠️ 修復 1：強制指定 'linear'，確保 Bybit V5 100% 準確回傳 USDT 合約
+        live_positions_raw = exchange.fetch_positions(params={'category': 'linear'})
         live_symbols = {p['symbol']: p for p in live_positions_raw if
                         float(p.get('contracts', 0) or p.get('size', 0)) > 0}
+
+        # ==========================================
+        # 🛠️ 修復 2：動態孤兒倉位接管 (Auto-Adopt 機制)
+        # 只要發現 Bybit 有單，但 Bot 記憶體無，即刻接管並重設防護網！
+        # ==========================================
+        for s, p in live_symbols.items():
+            if s not in positions:
+                side = p.get('side', '').lower()
+                info_side = p.get('info', {}).get('side', '').lower()
+
+                if side in ['long', 'buy'] or info_side in ['buy', 'long']:
+                    entry_p = float(p.get('entryPrice', 0))
+                    amt = float(p.get('contracts', 0) or p.get('size', 0))
+                    atr, _ = get_market_metrics(s)
+                    if not atr: atr = entry_p * 0.01
+
+                    # 嘗試抓取 Bybit 現有 TP/SL，如果被撤銷咗就根據 ATR 重新計算
+                    sl_p = float(p.get('stopLoss') or 0)
+                    tp_p = float(p.get('takeProfit') or 0)
+
+                    if sl_p == 0: sl_p = float(exchange.price_to_precision(s, entry_p - (SL_ATR_MULT * atr)))
+                    if tp_p == 0: tp_p = float(exchange.price_to_precision(s, entry_p + (TP_ATR_MULT * atr)))
+                    is_be = True if sl_p > entry_p else False
+
+                    # 寫入腦海，正式接管
+                    positions[s] = {
+                        'amount': amt, 'entry_price': entry_p, 'tp_price': tp_p, 'sl_price': sl_p,
+                        'is_breakeven': is_be, 'atr': atr, 'max_pnl_pct': 0.0, 'entry_time': time.time()
+                    }
+                    print(f"🚨 [系統自癒] 發現並自動接管孤兒多單: {s} | 入場價: {entry_p} | 數量: {amt}")
+        # ==========================================
 
         # 1. 處理已經被交易所平倉的訂單
         for s in list(positions.keys()):
             if s not in live_symbols:
                 print(f"🧹 交易所已自動平倉，處理真實 PnL 結算單: {s}")
-                # ❌ [Short 原版保留] real_pnl = process_native_exit_log(s, positions[s], position_type='short')
-                # 🚀 [Big Long 修改]
                 real_pnl = process_native_exit_log(s, positions[s], position_type='long')
                 cancel_all_v5(s)
 
@@ -493,34 +523,27 @@ def manage_long_positions():
             curr_p, pos = exchange.fetch_ticker(s)['last'], positions[s]
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
 
-            # 🚀 動態核心：計算該幣種專屬波動率 (ATR 反推百分比)
             coin_volatility_pct = pos['atr'] / pos['entry_price']
-
             sl_updated = False
 
-            # 追蹤最高利潤點
             if 'max_pnl_pct' not in pos: pos['max_pnl_pct'] = pnl_pct
             pos['max_pnl_pct'] = max(pos['max_pnl_pct'], pnl_pct)
 
-            # 🚀 階段一 & 二：爬升期 -> 升幅超過 2.0 倍 ATR 才推保本 (數據顯示 1.5 太易被洗走)
+            # 階段一 & 二：爬升期推保本
             if not pos['is_breakeven'] and pnl_pct > (coin_volatility_pct * 2.0):
-                # 鎖定 0.2% 利潤作為保本底線 (夠冚手續費有突)
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.002, True, True
 
-            # 🚀 階段三：三段式放風箏追蹤止損 (Trail SL)
+            # 階段三：三段式放風箏追蹤止損 (Trail SL)
             if pos['is_breakeven']:
-                # 暴漲期：利潤飆升超過 3.5 倍 ATR (俾妖幣多啲空間衝)，風箏線收緊至 1.5 ATR 距離
                 if pnl_pct > (coin_volatility_pct * 3.5):
                     trail_sl = curr_p - (1.5 * pos['atr'])
-                # 正常爬升期：風箏線放鬆至 2.0 ATR 距離，容許合理回調
                 else:
                     trail_sl = curr_p - (2.0 * pos['atr'])
 
                 if trail_sl > pos['sl_price']:
-                    # 極限貼盤防護：多單上移門檻 0.05%
                     if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.0005:
                         sl_updated = True
-                        pos['sl_price'] = trail_sl  # 本地腦海永遠維持最新
+                        pos['sl_price'] = trail_sl
 
             # 發送更新到交易所
             if sl_updated:
@@ -536,17 +559,16 @@ def manage_long_positions():
             exit_reason = None
             time_held = time.time() - pos.get('entry_time', time.time())
 
-            # 🛠️ V6.1 第 1 重防護：聰明時間止損（持倉 > 5 分鐘仍在虧損）
-            # 原條件 pnl_pct < 0.005 會踢走小賺 (+0.3%) 的倉位，改為只踢虧損
+            # 聰明時間止損
             if not exit_reason and time_held > 300 and pnl_pct < 0:
                 exit_reason = "Time Stop (Failed to ignite)"
 
-            # 🚀 第 2 重防護：資金流反轉檢測 (只在未保本且處於虧損時檢查，節省 API)
+            # 資金流反轉檢測
             if not exit_reason and not pos['is_breakeven'] and pnl_pct < 0:
                 if check_flow_reversal(s):
                     exit_reason = "Flow Reversal (Smart Exit)"
 
-            # 常規本地 TP/SL 檢查 (第 3 重與第 4 重防護)
+            # 常規本地 TP/SL 檢查
             if not exit_reason:
                 if curr_p >= pos['tp_price']:
                     exit_reason = "TP (Long IOC Exit)"
@@ -563,7 +585,6 @@ def manage_long_positions():
                 except:
                     exchange.create_market_sell_order(s, pos['amount'], {'reduceOnly': True})
 
-                # 🛠️ V6.1：改用 ioc_price（掛單成交估算）而非 curr_p（報價），日誌更準確
                 ioc_pnl = round((ioc_price - pos['entry_price']) * pos['amount'], 4)
 
                 log_to_csv({'symbol': s, 'action': 'LONG_EXIT', 'price': curr_p, 'amount': pos['amount'],
