@@ -16,8 +16,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('AlgoTrade_Long_V6.5_Thermostat')  # 🚀 [V6.5 修改]
 
 # Name: dreadnought
-API_KEY = "xd8NcfedvibG9tP4iD"
-API_SECRET = "ZzGICmYtkDHyTWgT1UiGpiesjz9b26Mactbw"
+API_KEY = ""
+API_SECRET = ""
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
@@ -29,7 +29,7 @@ exchange.load_markets()
 
 # 檔案與路徑設定
 LOG_DIR = "result"
-STATUS_DIR = "status"
+STATUS_DIR = "../status"
 LOG_FILE = f"{LOG_DIR}/live_long_log.csv"
 STATUS_FILE = f"{STATUS_DIR}/btc_regime_long.csv"
 BLACKLIST_FILE = f"{STATUS_DIR}/dynamic_blacklist_long.json"
