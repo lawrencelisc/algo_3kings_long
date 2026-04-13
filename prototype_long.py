@@ -400,7 +400,7 @@ def get_btc_regime_v6_5():
         elif hard_brake:
             status, signal = f"🔴 RED     (HARD BRAKE: {brake_reason})", -1
         elif soft_brake:
-            status, signal = f"🟡 YELLOW  (SOFT BRAKE: {brake_reason})", 1
+            status, signal = f"🟡 YELLOW  (SOFT BRAKE: {brake_reason})", 0
         elif cond_trend or cond_adx:
             status, signal = "🟡 YELLOW  (Standby - Waiting for confluence)", 0
         else:
