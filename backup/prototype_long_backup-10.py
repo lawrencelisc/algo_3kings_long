@@ -15,8 +15,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('AlgoTrade_Long_V6.6_Thermostat')  # 🚀 [V6.6 修改] 版本號更新
 
 # Name: yamato
-API_KEY = "fpirpvJmwub1uAzqA4"
-API_SECRET = "9QQwKuZEg8e3YFKTYXSGj3MW9YBHlomeCrtJ"
+API_KEY = ""
+API_SECRET = ""
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
