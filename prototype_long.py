@@ -13,9 +13,9 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('AlgoTrade_Long_V6.0')
 
-# Name: dreadnought
-API_KEY = "xd8NcfedvibG9tP4iD"
-API_SECRET = "ZzGICmYtkDHyTWgT1UiGpiesjz9b26Mactbw"
+# Name: yamato
+API_KEY = "fpirpvJmwub1uAzqA4"
+API_SECRET = "9QQwKuZEg8e3YFKTYXSGj3MW9YBHlomeCrtJ"
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
